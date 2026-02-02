@@ -1,0 +1,387 @@
+"""Model Comparison - Compare different model architectures and training methods."""
+
+import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import streamlit as st
+import torch
+from torch.utils.data import DataLoader
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+
+from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
+from robust_amc.data import PowerNormalize, Compose, get_data_loaders
+from robust_amc.data.transforms import ToTensor
+from robust_amc.data.impairments import CarrierFrequencyOffset, IQImbalance
+from robust_amc.data.channels import RayleighFading
+
+# Import utilities
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils import (
+    load_dataset,
+    get_available_models,
+    load_model_by_name,
+    get_samples_for_modulation,
+    predict_modulation,
+    normalize_samples,
+    DATA_PATH,
+)
+
+# Configure matplotlib
+plt.rcParams.update({
+    'font.size': 11,
+    'axes.titlesize': 12,
+    'axes.labelsize': 11,
+})
+
+st.set_page_config(page_title="Model Comparison", page_icon="📊", layout="wide")
+
+st.title("Model Comparison")
+st.markdown("""
+Compare the performance of different models:
+- **PF-CNN Baseline**: Standard supervised training
+- **PF-CNN + MDA-DMC**: Trained with data augmentation
+- **CLSR-AMC**: Contrastive learning with self-reconstruction
+""")
+
+# Load data
+dataset = load_dataset()
+
+if dataset is None:
+    st.error("Dataset not found. Please download RadioML2016.10a.")
+    st.stop()
+
+# Check available models
+available_models = get_available_models()
+
+if len(available_models) == 0:
+    st.error("No trained models found. Please train at least one model first.")
+    st.info("""
+    Train models with:
+    ```bash
+    # Baseline
+    uv run python scripts/train_baseline.py
+
+    # MDA-DMC
+    uv run python scripts/train_mda_dmc.py
+
+    # CLSR-AMC
+    uv run python scripts/train_clsr_amc.py
+    ```
+    """)
+    st.stop()
+
+st.success(f"Found {len(available_models)} trained model(s): {', '.join(available_models)}")
+
+# Model selection
+st.sidebar.header("Model Selection")
+selected_models = st.sidebar.multiselect(
+    "Select models to compare",
+    available_models,
+    default=available_models[:2] if len(available_models) > 1 else available_models,
+)
+
+if len(selected_models) == 0:
+    st.warning("Please select at least one model to analyze.")
+    st.stop()
+
+# Load selected models
+models = {}
+for model_name in selected_models:
+    model = load_model_by_name(model_name)
+    if model is not None:
+        models[model_name] = model
+
+if len(models) == 0:
+    st.error("Failed to load any models.")
+    st.stop()
+
+# Comparison type selection
+st.sidebar.markdown("---")
+st.sidebar.header("Comparison Type")
+comparison_type = st.sidebar.selectbox(
+    "What to compare",
+    ["Single Signal Prediction", "SNR Sweep", "Impairment Robustness"],
+)
+
+# Get test data
+test_data, test_labels, test_snrs = dataset["test"]
+
+if comparison_type == "Single Signal Prediction":
+    st.subheader("Single Signal Prediction Comparison")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        modulation = st.selectbox("Modulation Type", MODULATION_CLASSES, index=4)
+    with col2:
+        snr = st.select_slider("SNR (dB)", options=SNR_LEVELS, value=10)
+
+    samples = get_samples_for_modulation(
+        test_data, test_labels, test_snrs, modulation, snr, n_samples=5
+    )
+
+    if samples is None:
+        st.warning(f"No samples found for {modulation} at {snr} dB")
+        st.stop()
+
+    # Show constellation
+    st.markdown("### Signal Constellation")
+    fig, ax = plt.subplots(figsize=(5, 5))
+    I = samples[:, 0, :].flatten()
+    Q = samples[:, 1, :].flatten()
+    ax.scatter(I, Q, alpha=0.5, s=10, c="#2563eb")
+    ax.axhline(y=0, color="gray", linewidth=0.5, alpha=0.5)
+    ax.axvline(x=0, color="gray", linewidth=0.5, alpha=0.5)
+    ax.set_xlabel("I")
+    ax.set_ylabel("Q")
+    ax.set_xlim(-3, 3)
+    ax.set_ylim(-3, 3)
+    ax.set_aspect("equal")
+    ax.set_title(f"{modulation} @ {snr} dB")
+    ax.grid(True, alpha=0.2)
+    st.pyplot(fig)
+    plt.close(fig)
+
+    # Predictions from each model
+    st.markdown("### Model Predictions")
+    sample = samples[0]
+
+    cols = st.columns(len(models))
+    for i, (model_name, model) in enumerate(models.items()):
+        with cols[i]:
+            pred, probs = predict_modulation(model, sample)
+            conf = probs[MODULATION_CLASSES.index(pred)] if pred else 0
+
+            st.markdown(f"**{model_name}**")
+            if pred == modulation:
+                st.success(f"✓ {pred} ({conf:.0%})")
+            else:
+                st.error(f"✗ {pred} ({conf:.0%})")
+
+            # Show top-3 predictions
+            top3_idx = np.argsort(probs)[-3:][::-1]
+            for idx in top3_idx:
+                st.write(f"  {MODULATION_CLASSES[idx]}: {probs[idx]:.1%}")
+
+elif comparison_type == "SNR Sweep":
+    st.subheader("Accuracy vs SNR Comparison")
+
+    if st.button("Run SNR Sweep (may take a moment)"):
+        with st.spinner("Evaluating models across SNR levels..."):
+            results = {}
+            progress_bar = st.progress(0)
+
+            for model_idx, (model_name, model) in enumerate(models.items()):
+                accuracies = []
+
+                for snr_idx, snr in enumerate(SNR_LEVELS):
+                    # Get samples for this SNR
+                    mask = test_snrs == snr
+                    snr_data = test_data[mask]
+                    snr_labels = test_labels[mask]
+
+                    # Evaluate
+                    correct = 0
+                    total = 0
+                    transform = Compose([PowerNormalize(), ToTensor()])
+
+                    for sample, label in zip(snr_data[:200], snr_labels[:200]):  # Limit samples
+                        x = transform(sample).unsqueeze(0)
+                        with torch.no_grad():
+                            logits = model(x)
+                            pred = logits.argmax(dim=1).item()
+                        if pred == label:
+                            correct += 1
+                        total += 1
+
+                    accuracies.append(correct / total if total > 0 else 0)
+
+                    # Update progress
+                    progress = (model_idx * len(SNR_LEVELS) + snr_idx + 1) / (len(models) * len(SNR_LEVELS))
+                    progress_bar.progress(progress)
+
+                results[model_name] = accuracies
+
+            progress_bar.empty()
+
+            # Plot results
+            fig, ax = plt.subplots(figsize=(10, 6))
+            colors = ["#2563eb", "#dc2626", "#16a34a", "#9333ea"]
+
+            for i, (model_name, accs) in enumerate(results.items()):
+                ax.plot(SNR_LEVELS, accs, "o-", label=model_name,
+                        color=colors[i % len(colors)], linewidth=2, markersize=6)
+
+            ax.set_xlabel("SNR (dB)")
+            ax.set_ylabel("Accuracy")
+            ax.set_title("Model Comparison: Accuracy vs SNR")
+            ax.legend(loc="lower right")
+            ax.grid(True, alpha=0.3)
+            ax.set_ylim(0, 1)
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # Summary table
+            st.markdown("### Summary Statistics")
+            summary_data = []
+            for model_name, accs in results.items():
+                high_snr_acc = np.mean([a for a, s in zip(accs, SNR_LEVELS) if s >= 10])
+                low_snr_acc = np.mean([a for a, s in zip(accs, SNR_LEVELS) if s < 0])
+                overall_acc = np.mean(accs)
+                summary_data.append({
+                    "Model": model_name,
+                    "Overall": f"{overall_acc:.1%}",
+                    "High SNR (≥10dB)": f"{high_snr_acc:.1%}",
+                    "Low SNR (<0dB)": f"{low_snr_acc:.1%}",
+                })
+            st.table(summary_data)
+
+elif comparison_type == "Impairment Robustness":
+    st.subheader("Robustness Under Impairments")
+
+    impairment_type = st.selectbox(
+        "Impairment Type",
+        ["CFO (Carrier Frequency Offset)", "I/Q Imbalance", "Rayleigh Fading"],
+    )
+
+    if st.button("Run Robustness Test"):
+        with st.spinner("Testing robustness..."):
+            results = {}
+
+            if "CFO" in impairment_type:
+                cfo_values = [0, 500, 1000, 2000, 3000, 5000]
+                x_label = "CFO (Hz)"
+                x_values = cfo_values
+
+                for model_name, model in models.items():
+                    accuracies = []
+                    for cfo in cfo_values:
+                        correct = 0
+                        total = 0
+                        transform = Compose([PowerNormalize(), ToTensor()])
+
+                        # Test on high SNR samples
+                        mask = test_snrs >= 10
+                        for sample, label in zip(test_data[mask][:200], test_labels[mask][:200]):
+                            # Apply CFO
+                            if cfo > 0:
+                                cfo_transform = CarrierFrequencyOffset(delta_f=cfo, sample_rate=1e6)
+                                sample = cfo_transform(sample)
+
+                            x = transform(sample).unsqueeze(0)
+                            with torch.no_grad():
+                                pred = model(x).argmax(dim=1).item()
+                            if pred == label:
+                                correct += 1
+                            total += 1
+                        accuracies.append(correct / total)
+                    results[model_name] = accuracies
+
+            elif "I/Q" in impairment_type:
+                iq_values = [0, 1, 2, 3, 4, 5]
+                x_label = "I/Q Imbalance (dB)"
+                x_values = iq_values
+
+                for model_name, model in models.items():
+                    accuracies = []
+                    for iq in iq_values:
+                        correct = 0
+                        total = 0
+                        transform = Compose([PowerNormalize(), ToTensor()])
+
+                        mask = test_snrs >= 10
+                        for sample, label in zip(test_data[mask][:200], test_labels[mask][:200]):
+                            if iq > 0:
+                                iq_transform = IQImbalance(amplitude_imbalance_db=iq, phase_imbalance_deg=iq)
+                                sample = iq_transform(sample)
+
+                            x = transform(sample).unsqueeze(0)
+                            with torch.no_grad():
+                                pred = model(x).argmax(dim=1).item()
+                            if pred == label:
+                                correct += 1
+                            total += 1
+                        accuracies.append(correct / total)
+                    results[model_name] = accuracies
+
+            else:  # Rayleigh Fading
+                x_values = ["No Fading", "Rayleigh"]
+                x_label = "Channel"
+
+                for model_name, model in models.items():
+                    accuracies = []
+                    for fading in [False, True]:
+                        correct = 0
+                        total = 0
+                        transform = Compose([PowerNormalize(), ToTensor()])
+
+                        mask = test_snrs >= 10
+                        for i, (sample, label) in enumerate(zip(test_data[mask][:200], test_labels[mask][:200])):
+                            if fading:
+                                fading_channel = RayleighFading(seed=i)
+                                sample = fading_channel(sample)
+
+                            x = transform(sample).unsqueeze(0)
+                            with torch.no_grad():
+                                pred = model(x).argmax(dim=1).item()
+                            if pred == label:
+                                correct += 1
+                            total += 1
+                        accuracies.append(correct / total)
+                    results[model_name] = accuracies
+
+            # Plot results
+            fig, ax = plt.subplots(figsize=(10, 6))
+            colors = ["#2563eb", "#dc2626", "#16a34a", "#9333ea"]
+
+            if isinstance(x_values[0], str):
+                x_plot = range(len(x_values))
+                for i, (model_name, accs) in enumerate(results.items()):
+                    ax.bar([x + i * 0.25 for x in x_plot], accs, 0.25,
+                           label=model_name, color=colors[i % len(colors)])
+                ax.set_xticks([x + 0.125 * (len(models) - 1) for x in x_plot])
+                ax.set_xticklabels(x_values)
+            else:
+                for i, (model_name, accs) in enumerate(results.items()):
+                    ax.plot(x_values, accs, "o-", label=model_name,
+                            color=colors[i % len(colors)], linewidth=2, markersize=6)
+
+            ax.set_xlabel(x_label)
+            ax.set_ylabel("Accuracy")
+            ax.set_title(f"Robustness: {impairment_type}")
+            ax.legend(loc="lower left" if "CFO" in impairment_type or "I/Q" in impairment_type else "upper right")
+            ax.grid(True, alpha=0.3)
+            ax.set_ylim(0, 1)
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # Show accuracy drop
+            st.markdown("### Accuracy Degradation")
+            for model_name, accs in results.items():
+                baseline = accs[0]
+                worst = min(accs)
+                drop = baseline - worst
+                st.write(f"**{model_name}**: {baseline:.1%} → {worst:.1%} (drop: {drop:.1%})")
+
+# Information section
+with st.expander("About the Models", expanded=False):
+    st.markdown("""
+    ### Model Architectures
+
+    **PF-CNN Baseline**
+    - Dual-branch CNN processing amplitude and phase
+    - Supervised training with CrossEntropy loss
+    - Standard approach, susceptible to domain shift
+
+    **PF-CNN + MDA-DMC**
+    - Same architecture as baseline
+    - Trained with Multi-Domain Augmentation (AGN, RSC, SSC)
+    - More robust to variations in SNR, phase, and amplitude
+
+    **CLSR-AMC**
+    - Contrastive Learning with Self-Reconstruction
+    - Multi-task training: contrastive + reconstruction + classification
+    - Learns robust representations through self-supervision
+    """)

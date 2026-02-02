@@ -2,10 +2,12 @@
 
 import sys
 from pathlib import Path
+from typing import Union
 
 import numpy as np
 import streamlit as st
 import torch
+import torch.nn as nn
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -13,30 +15,87 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from robust_amc.data import (
     load_radioml2016a,
     stratified_split,
-    RadioMLDataset,
     PowerNormalize,
     Compose,
 )
 from robust_amc.data.transforms import ToTensor
 from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
-from robust_amc.data.channels import AWGN, RayleighFading, RicianFading
+from robust_amc.data.channels import RayleighFading, RicianFading
 from robust_amc.data.impairments import (
     CarrierFrequencyOffset,
     IQImbalance,
     DCOffset,
     PhaseNoise,
 )
-from robust_amc.models import PFCNN
+from robust_amc.models import PFCNN, CLSRAMC, create_clsr_amc
 
 
 # Default paths
 DATA_PATH = Path("data/RML2016.10a_dict.pkl")
-CHECKPOINT_PATH = Path("checkpoints/baseline/best_model.pt")
+
+# Model checkpoint paths
+MODEL_CHECKPOINTS = {
+    "PF-CNN Baseline": Path("checkpoints/baseline/best_model.pt"),
+    "PF-CNN + MDA-DMC": Path("checkpoints/mda_dmc/best_model.pt"),
+    "CLSR-AMC": Path("checkpoints/clsr_amc/best_model.pt"),
+}
+
+
+def get_available_models() -> list[str]:
+    """Get list of models that have trained checkpoints available."""
+    available = []
+    for name, path in MODEL_CHECKPOINTS.items():
+        if path.exists():
+            available.append(name)
+    return available
 
 
 @st.cache_resource
-def load_model(checkpoint_path: Path = CHECKPOINT_PATH) -> PFCNN:
-    """Load the trained model (cached)."""
+def load_model_by_name(model_name: str) -> Union[PFCNN, CLSRAMC, None]:
+    """Load a model by name (cached).
+
+    Args:
+        model_name: One of "PF-CNN Baseline", "PF-CNN + MDA-DMC", or "CLSR-AMC"
+
+    Returns:
+        Loaded model or None if not found
+    """
+    if model_name not in MODEL_CHECKPOINTS:
+        st.error(f"Unknown model: {model_name}")
+        return None
+
+    checkpoint_path = MODEL_CHECKPOINTS[model_name]
+    if not checkpoint_path.exists():
+        st.warning(f"Model checkpoint not found at {checkpoint_path}")
+        return None
+
+    # Create appropriate model architecture
+    if model_name == "CLSR-AMC":
+        model = create_clsr_amc(num_classes=len(MODULATION_CLASSES), variant="default")
+    else:
+        # Both baseline and MDA-DMC use PF-CNN architecture
+        model = PFCNN(num_classes=len(MODULATION_CLASSES))
+
+    # Load weights
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        model.load_state_dict(checkpoint)
+    model.eval()
+
+    return model
+
+
+@st.cache_resource
+def load_model(checkpoint_path: Path = None) -> PFCNN:
+    """Load the baseline trained model (cached).
+
+    For backwards compatibility - loads baseline model by default.
+    """
+    if checkpoint_path is None:
+        checkpoint_path = MODEL_CHECKPOINTS["PF-CNN Baseline"]
+
     model = PFCNN(num_classes=len(MODULATION_CLASSES))
 
     if checkpoint_path.exists():
@@ -168,11 +227,13 @@ def apply_fading(
 
 
 def predict_modulation(
-    model: PFCNN,
+    model: nn.Module,
     signal: np.ndarray,
     normalize: bool = True,
 ) -> tuple[str, np.ndarray]:
     """Run inference on a signal and return prediction.
+
+    Works with both PFCNN and CLSRAMC models.
 
     Returns:
         Tuple of (predicted_class_name, probabilities)
