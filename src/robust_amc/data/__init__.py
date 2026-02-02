@@ -10,6 +10,20 @@ from .impairments import (
     PhaseNoise,
     SampleRateOffset,
 )
+from .augmentations import (
+    AdditiveGaussianNoise,
+    RotationInSignalConstellation,
+    StretchingInSignalConstellation,
+    RotationAndStretchingInSignalConstellation,
+    TimeShift,
+    RandomFlip,
+    RandomAugmentation,
+    MDADMCPipeline,
+    AGN,
+    RSC,
+    SSC,
+    RSSC,
+)
 
 __all__ = [
     # Data loading
@@ -32,4 +46,17 @@ __all__ = [
     "DCOffset",
     "PhaseNoise",
     "SampleRateOffset",
+    # Augmentations (MDA-DMC)
+    "AdditiveGaussianNoise",
+    "RotationInSignalConstellation",
+    "StretchingInSignalConstellation",
+    "RotationAndStretchingInSignalConstellation",
+    "TimeShift",
+    "RandomFlip",
+    "RandomAugmentation",
+    "MDADMCPipeline",
+    "AGN",
+    "RSC",
+    "SSC",
+    "RSSC",
 ]
