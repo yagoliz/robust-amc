@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Train baseline PF-CNN model on RadioML2016.10a."""
+
+import argparse
+import sys
+from pathlib import Path
+
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+import matplotlib.pyplot as plt
+import torch
+
+from robust_amc.data import get_data_loaders, PowerNormalize, Compose
+from robust_amc.data.transforms import ToTensor
+from robust_amc.data.radioml_loader import MODULATION_CLASSES
+from robust_amc.models import create_pfcnn
+from robust_amc.training import Trainer, TrainingConfig
+from robust_amc.evaluation import (
+    evaluate_model,
+    evaluate_snr_sweep,
+    compute_confusion_matrix,
+    plot_accuracy_vs_snr,
+    plot_confusion_matrix,
+    plot_training_history,
+)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train baseline PF-CNN")
+    parser.add_argument(
+        "--data-path",
+        type=Path,
+        default=Path("data/RML2016.10a_dict.pkl"),
+        help="Path to RadioML dataset",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=100,
+        help="Maximum training epochs",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=256,
+        help="Batch size",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-3,
+        help="Learning rate",
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=Path("checkpoints/baseline"),
+        help="Directory to save checkpoints",
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=Path("results"),
+        help="Directory to save results",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda", "mps"],
+        help="Device to train on",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help="Number of data loading workers (0 for macOS, 4+ for Linux/cluster)",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # Create directories
+    args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    args.results_dir.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 60)
+    print("Training Baseline PF-CNN")
+    print("=" * 60)
+
+    # Check dataset
+    if not args.data_path.exists():
+        print(f"Dataset not found at {args.data_path}")
+        print("Run: python scripts/download_data.py")
+        sys.exit(1)
+
+    # Set up transforms
+    transform = Compose([PowerNormalize(), ToTensor()])
+
+    # Load data
+    print("\n1. Loading data...")
+    loaders = get_data_loaders(
+        args.data_path,
+        batch_size=args.batch_size,
+        train_transform=transform,
+        eval_transform=transform,
+        num_workers=args.num_workers,
+    )
+    print(f"   Train: {len(loaders['train'].dataset)} samples")
+    print(f"   Val:   {len(loaders['val'].dataset)} samples")
+    print(f"   Test:  {len(loaders['test'].dataset)} samples")
+
+    # Create model
+    print("\n2. Creating model...")
+    model = create_pfcnn(num_classes=len(MODULATION_CLASSES), variant="default")
+
+    # Count parameters
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"   Parameters: {n_params:,}")
+
+    # Training config
+    config = TrainingConfig(
+        learning_rate=args.lr,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        checkpoint_dir=args.checkpoint_dir,
+        device=args.device,
+    )
+    print(f"   Device: {config.device}")
+
+    # Train
+    print("\n3. Training...")
+    trainer = Trainer(model, config)
+    history = trainer.fit(loaders["train"], loaders["val"], verbose=True)
+
+    # Save final model
+    trainer.save_checkpoint(args.checkpoint_dir / "final_model.pt")
+    print(f"\n   Saved checkpoint to {args.checkpoint_dir}")
+
+    # Plot training history
+    fig = plot_training_history(
+        {
+            "train_loss": history.train_loss,
+            "val_loss": history.val_loss,
+            "train_acc": history.train_acc,
+            "val_acc": history.val_acc,
+        },
+        title="PF-CNN Baseline Training",
+    )
+    fig.savefig(args.results_dir / "baseline_training_history.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # Evaluate on test set
+    print("\n4. Evaluating on test set...")
+
+    # Load best model
+    trainer.load_checkpoint(args.checkpoint_dir / "best_model.pt")
+
+    results = evaluate_model(model, loaders["test"], device=config.device)
+    print(f"   Test Accuracy: {results['accuracy']:.4f}")
+
+    # SNR sweep
+    print("\n5. Computing accuracy vs SNR...")
+    snr_values, accuracies = evaluate_snr_sweep(model, loaders["test"], device=config.device)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    plot_accuracy_vs_snr(
+        snr_values,
+        {"PF-CNN Baseline": accuracies},
+        title="Baseline PF-CNN: Accuracy vs SNR (AWGN)",
+        ax=ax,
+    )
+    fig.savefig(args.results_dir / "baseline_accuracy_vs_snr.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    print("   SNR (dB) | Accuracy")
+    print("   " + "-" * 20)
+    for snr, acc in zip(snr_values, accuracies):
+        print(f"   {snr:6d}   | {acc:.4f}")
+
+    # Confusion matrix
+    print("\n6. Computing confusion matrix...")
+    cm = compute_confusion_matrix(results["targets"], results["predictions"])
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    plot_confusion_matrix(
+        cm,
+        MODULATION_CLASSES,
+        title="Baseline PF-CNN Confusion Matrix (All SNRs)",
+        ax=ax,
+    )
+    fig.savefig(args.results_dir / "baseline_confusion_matrix.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # Confusion matrix at high SNR
+    high_snr_mask = results["snrs"] >= 10
+    cm_high_snr = compute_confusion_matrix(
+        results["targets"][high_snr_mask],
+        results["predictions"][high_snr_mask],
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    plot_confusion_matrix(
+        cm_high_snr,
+        MODULATION_CLASSES,
+        title="Baseline PF-CNN Confusion Matrix (SNR >= 10 dB)",
+        ax=ax,
+    )
+    fig.savefig(
+        args.results_dir / "baseline_confusion_matrix_high_snr.png",
+        dpi=150, bbox_inches="tight"
+    )
+    plt.close(fig)
+
+    print("\n" + "=" * 60)
+    print("Training complete!")
+    print(f"Best validation accuracy: {history.best_val_acc:.4f}")
+    print(f"Test accuracy: {results['accuracy']:.4f}")
+    print(f"Results saved to: {args.results_dir}")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()

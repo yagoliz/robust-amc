@@ -1,0 +1,43 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Data files (large, download separately)
+data/*.pkl
+data/*.tar.bz2
+data/*.h5
+
+# Model checkpoints
+checkpoints/*.pt
+checkpoints/*.pth
+
+# Results and figures (regenerable)
+results/*.png
+results/*.pdf
+results/*.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+.claude
