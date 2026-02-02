@@ -14,7 +14,7 @@ from pathlib import Path
 
 def main():
     # Get the app path
-    app_path = Path(__file__).parent.parent / "app" / "main.py"
+    app_path = Path(__file__).parent.parent / "app" / "Introduction.py"
 
     if not app_path.exists():
         print(f"Error: App not found at {app_path}")

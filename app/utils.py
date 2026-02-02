@@ -70,6 +70,17 @@ def load_dataset(data_path: Path = DATA_PATH) -> dict:
     }
 
 
+def normalize_signal(signal: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    """Normalize signal to unit power."""
+    power = np.mean(signal[0] ** 2 + signal[1] ** 2)
+    return signal / np.sqrt(power + eps)
+
+
+def normalize_samples(samples: np.ndarray) -> np.ndarray:
+    """Normalize a batch of samples to unit power."""
+    return np.array([normalize_signal(s) for s in samples])
+
+
 def get_samples_for_modulation(
     data: np.ndarray,
     labels: np.ndarray,
@@ -77,6 +88,7 @@ def get_samples_for_modulation(
     modulation: str,
     snr: int,
     n_samples: int = 10,
+    normalize: bool = True,
 ) -> np.ndarray:
     """Get samples for a specific modulation and SNR."""
     mod_idx = MODULATION_CLASSES.index(modulation)
@@ -88,7 +100,12 @@ def get_samples_for_modulation(
 
     n = min(n_samples, len(indices))
     selected = np.random.choice(indices, size=n, replace=False)
-    return data[selected]
+    samples = data[selected]
+
+    if normalize:
+        samples = normalize_samples(samples)
+
+    return samples
 
 
 def apply_impairments(

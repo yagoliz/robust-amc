@@ -53,13 +53,6 @@ amplitude and phase information separately before fusion.
 
 # Sidebar info
 with st.sidebar:
-    st.markdown("### Quick Links")
-    st.page_link("pages/1_Signal_Explorer.py", label="Signal Explorer", icon="📊")
-    st.page_link("pages/2_Impairment_Simulator.py", label="Impairment Simulator", icon="⚡")
-    st.page_link("pages/3_Model_Evaluation.py", label="Model Evaluation", icon="🎯")
-    st.page_link("pages/4_Domain_Shift_Demo.py", label="Domain Shift Demo", icon="📉")
-
-    st.markdown("---")
     st.markdown("### About")
     st.markdown("""
     Built with:
