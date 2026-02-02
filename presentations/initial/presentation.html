@@ -167,6 +167,12 @@
                         <div class="label">Real-World</div>
                     </div>
                 </div>
+                <aside class="notes">
+                    <p><strong>Einleitung:</strong></p>
+                    <p>Die automatische Modulationsklassifizierung versucht, Signalmodulationen zu erkennen, was für die Signalaufklärung unerlässlich ist.</p>
+                    <p>Wir arbeiten mit dem RadioML-Datensatz, der 11 verschiedene Modulationsarten enthält – von einfachen analogen Verfahren wie AM und FM bis hin zu digitalen Verfahren wie QPSK und QAM.</p>
+                    <p>Im Labor erreichen Deep-Learning-Modelle über 90% Genauigkeit. Aber was passiert in der echten Welt? Das ist die zentrale Frage dieser Präsentation.</p>
+                </aside>
             </section>
 
             <!-- Problem Slide -->
@@ -195,6 +201,18 @@
                 <p style="margin-top: 1.5em; color: #64748b; font-size: 0.9em;">
                     <em>This gap between training and deployment is called <strong>domain shift</strong>.</em>
                 </p>
+                <aside class="notes">
+                    <p><strong>Das Problem erklären:</strong></p>
+                    <p>Hier sehen wir das Kernproblem: Ein Modell, das im Labor mit 92% Genauigkeit funktioniert, kann im Einsatz auf nur 35% fallen.</p>
+                    <p>Warum? Weil reale Signale mit Störungen konfrontiert werden, die im Training nicht vorkamen:</p>
+                    <ul>
+                        <li><strong>CFO (Carrier Frequency Offset):</strong> Frequenzabweichungen durch ungenaue Oszillatoren</li>
+                        <li><strong>I/Q-Imbalance:</strong> Amplituden- und Phasenfehler in der Hardware</li>
+                        <li><strong>DC-Offset:</strong> Gleichspannungsverschiebung durch LO-Leckage</li>
+                        <li><strong>Fading:</strong> Mehrwegeausbreitung verzerrt das Signal</li>
+                    </ul>
+                    <p>Dieses Phänomen nennen wir "Domain Shift" – die Trainingsdaten stammen aus einer anderen Verteilung als die Einsatzdaten.</p>
+                </aside>
             </section>
 
             <!-- Demo Slide -->
@@ -221,6 +239,17 @@
                 <div style="margin-top: 1.5em; padding: 1em; background: #f0fdf4; border-radius: 8px; text-align: center;">
                     <code style="font-size: 0.9em; color: #166534;">uv run streamlit run app/Home.py</code>
                 </div>
+                <aside class="notes">
+                    <p><strong>Die Demo vorstellen:</strong></p>
+                    <p>Um dieses Problem greifbar zu machen, haben wir eine interaktive Demo entwickelt.</p>
+                    <p><strong>Drei Hauptfunktionen:</strong></p>
+                    <ul>
+                        <li><strong>Impairment Simulator:</strong> Hier können Sie mit Schiebereglern verschiedene Störungen anwenden und in Echtzeit sehen, wie sich das Konstellationsdiagramm verändert. Sehr anschaulich!</li>
+                        <li><strong>Domain Shift Demo:</strong> Zeigt quantitativ, wie die Genauigkeit einbricht, wenn wir die Störungen erhöhen. Man sieht genau, ab welchem Punkt das Modell versagt.</li>
+                        <li><strong>Model Comparison:</strong> Hier vergleichen wir das Baseline-Modell mit unseren robusten Modellen unter identischen Bedingungen.</li>
+                    </ul>
+                    <p>Falls gewünscht, kann ich die Demo im Anschluss live zeigen.</p>
+                </aside>
             </section>
 
             <!-- Solution Slide -->
@@ -263,12 +292,31 @@
                         </div>
                     </div>
                 </div>
+                <aside class="notes">
+                    <p><strong>Unsere Lösungsansätze:</strong></p>
+                    <p>Wir haben zwei Methoden entwickelt, um dieses Problem zu lösen:</p>
+                    <p><strong>1. MDA-DMC (Multi-Domain Augmentation):</strong></p>
+                    <ul>
+                        <li>Idee: Wir simulieren die Störungen bereits während des Trainings</li>
+                        <li>Das Modell lernt, Signale trotz CFO, I/Q-Imbalance usw. zu erkennen</li>
+                        <li>Einfach zu implementieren und sehr effektiv</li>
+                    </ul>
+                    <p><strong>2. CLSR-AMC (Contrastive Learning):</strong></p>
+                    <ul>
+                        <li>Fortgeschrittener Ansatz mit selbstüberwachtem Lernen</li>
+                        <li>Das Modell lernt Merkmale, die über verschiedene Bedingungen hinweg konstant bleiben</li>
+                        <li>Besonders robust bei unbekannten Störungen</li>
+                    </ul>
+                    <p><strong>Ergebnis:</strong> Statt von 92% auf 35% zu fallen, bleibt das robuste Modell bei etwa 78% – ein enormer Unterschied für den praktischen Einsatz.</p>
+                    <p>Haben Sie Fragen zu den Methoden oder möchten Sie die Demo sehen?</p>
+                </aside>
             </section>
 
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/plugin/notes/notes.js"></script>
     <script>
         Reveal.initialize({
             hash: true,
@@ -277,6 +325,7 @@
             width: 1200,
             height: 700,
             margin: 0.1,
+            plugins: [ RevealNotes ],
         });
     </script>
 </body>
