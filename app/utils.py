@@ -251,10 +251,15 @@ def predict_modulation(
     # Add batch dimension
     x = x.unsqueeze(0)
 
+    # Move input to same device as model (handles cached models that may have been
+    # moved to MPS/CUDA by other pages)
+    device = next(model.parameters()).device
+    x = x.to(device)
+
     # Run inference
     with torch.no_grad():
         logits = model(x)
-        probs = torch.softmax(logits, dim=1).squeeze().numpy()
+        probs = torch.softmax(logits, dim=1).squeeze().cpu().numpy()
         pred_idx = logits.argmax(dim=1).item()
 
     return MODULATION_CLASSES[pred_idx], probs

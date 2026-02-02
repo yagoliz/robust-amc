@@ -218,8 +218,12 @@ n_cols = min(5, n_augmented)
 n_rows = (n_augmented + n_cols - 1) // n_cols
 
 fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows))
-if n_rows == 1:
+if n_rows == 1 and n_cols == 1:
+    axes = np.array([[axes]])
+elif n_rows == 1:
     axes = axes.reshape(1, -1)
+elif n_cols == 1:
+    axes = axes.reshape(-1, 1)
 
 for i in range(n_augmented):
     row, col = i // n_cols, i % n_cols

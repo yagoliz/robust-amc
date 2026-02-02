@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robust Automatic Modulation Classification</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/theme/white.css">
+    <style>
+        :root {
+            --r-main-font-size: 32px;
+            --r-heading-color: #1e3a5f;
+            --r-link-color: #2563eb;
+        }
+        .reveal h1, .reveal h2 { color: #1e3a5f; }
+        .reveal h1 { font-size: 2.2em; }
+        .reveal h2 { font-size: 1.6em; border-bottom: 3px solid #2563eb; padding-bottom: 0.3em; }
+        .reveal h3 { color: #374151; font-size: 1.2em; }
+
+        .reveal .slides section { text-align: left; }
+        .reveal ul { margin-left: 0; }
+        .reveal li { margin-bottom: 0.5em; }
+
+        .highlight-red { color: #dc2626; font-weight: bold; }
+        .highlight-green { color: #16a34a; font-weight: bold; }
+        .highlight-blue { color: #2563eb; font-weight: bold; }
+
+        .two-column { display: flex; gap: 2em; }
+        .two-column > div { flex: 1; }
+
+        .stat-box {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            border-radius: 12px;
+            padding: 1.5em;
+            text-align: center;
+            margin: 0.5em;
+        }
+        .stat-box .number { font-size: 2.5em; font-weight: bold; color: #1e3a5f; }
+        .stat-box .label { font-size: 0.8em; color: #64748b; }
+
+        .problem-arrow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1em;
+            margin: 1.5em 0;
+        }
+        .problem-arrow .box {
+            padding: 1em 1.5em;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        .problem-arrow .good { background: #dcfce7; color: #166534; }
+        .problem-arrow .bad { background: #fee2e2; color: #991b1b; }
+        .problem-arrow .arrow { font-size: 2em; color: #94a3b8; }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1em;
+            margin-top: 1em;
+        }
+        .feature-card {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 1em;
+            border-left: 4px solid #2563eb;
+        }
+        .feature-card h4 { margin: 0 0 0.5em 0; color: #1e3a5f; font-size: 0.9em; }
+        .feature-card p { margin: 0; font-size: 0.75em; color: #64748b; }
+
+        .solution-box {
+            background: #eff6ff;
+            border-radius: 12px;
+            padding: 1.2em;
+            margin: 0.8em 0;
+            border-left: 5px solid #2563eb;
+        }
+        .solution-box h3 { margin-top: 0; color: #1e40af; }
+        .solution-box p { margin-bottom: 0; color: #374151; }
+
+        .takeaway {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.8em;
+            margin: 0.8em 0;
+            padding: 0.8em;
+            background: #f8fafc;
+            border-radius: 8px;
+        }
+        .takeaway .icon { font-size: 1.5em; }
+        .takeaway .text { flex: 1; }
+
+        .impairment-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5em;
+            margin-top: 1em;
+        }
+        .impairment-tag {
+            background: #fef2f2;
+            color: #991b1b;
+            padding: 0.4em 0.8em;
+            border-radius: 20px;
+            font-size: 0.8em;
+        }
+
+        .title-slide { text-align: center !important; }
+        .title-slide h1 { border: none; font-size: 2.5em; margin-bottom: 0.2em; }
+        .title-slide .subtitle { color: #64748b; font-size: 1.2em; margin-bottom: 2em; }
+
+        .constellation {
+            display: inline-block;
+            width: 200px;
+            height: 200px;
+            background: #f8fafc;
+            border-radius: 8px;
+            position: relative;
+            border: 1px solid #e2e8f0;
+        }
+        .constellation::before, .constellation::after {
+            content: '';
+            position: absolute;
+            background: #cbd5e1;
+        }
+        .constellation::before {
+            width: 1px;
+            height: 100%;
+            left: 50%;
+        }
+        .constellation::after {
+            width: 100%;
+            height: 1px;
+            top: 50%;
+        }
+        .constellation .dot {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .clean .dot { background: #2563eb; }
+        .impaired .dot { background: #dc2626; opacity: 0.6; }
+    </style>
+</head>
+<body>
+    <div class="reveal">
+        <div class="slides">
+
+            <!-- Title Slide -->
+            <section class="title-slide">
+                <h1>Robust Modulation Classification</h1>
+                <p class="subtitle">Making Deep Learning Work in the Real World</p>
+                <div style="display: flex; justify-content: center; gap: 3em; margin-top: 2em;">
+                    <div class="stat-box">
+                        <div class="number">11</div>
+                        <div class="label">Modulation Types</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="number">90%+</div>
+                        <div class="label">Lab Accuracy</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="number">?</div>
+                        <div class="label">Real-World</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Problem Slide -->
+            <section>
+                <h2>The Problem: Domain Shift</h2>
+
+                <p>Deep learning models for RF classification achieve excellent accuracy in the lab...</p>
+
+                <div class="problem-arrow">
+                    <div class="box good">Lab: 92% Accuracy</div>
+                    <div class="arrow">&rarr;</div>
+                    <div class="box bad">Deployed: 35% Accuracy</div>
+                </div>
+
+                <p><strong>Why?</strong> Real-world signals face conditions not seen during training:</p>
+
+                <div class="impairment-list">
+                    <span class="impairment-tag">Frequency Drift (CFO)</span>
+                    <span class="impairment-tag">I/Q Imbalance</span>
+                    <span class="impairment-tag">DC Offset</span>
+                    <span class="impairment-tag">Phase Noise</span>
+                    <span class="impairment-tag">Multipath Fading</span>
+                    <span class="impairment-tag">Hardware Variations</span>
+                </div>
+
+                <p style="margin-top: 1.5em; color: #64748b; font-size: 0.9em;">
+                    <em>This gap between training and deployment is called <strong>domain shift</strong>.</em>
+                </p>
+            </section>
+
+            <!-- Demo Slide -->
+            <section>
+                <h2>The Demo: See It In Action</h2>
+
+                <p>An interactive tool to visualize domain shift and test solutions:</p>
+
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>Impairment Simulator</h4>
+                        <p>Adjust sliders to apply CFO, I/Q imbalance, fading. Watch the signal constellation distort in real-time.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>Domain Shift Demo</h4>
+                        <p>See accuracy collapse as impairments increase. Visualize exactly where models fail.</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>Model Comparison</h4>
+                        <p>Compare baseline vs. robust models. Test under combined real-world conditions.</p>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1.5em; padding: 1em; background: #f0fdf4; border-radius: 8px; text-align: center;">
+                    <code style="font-size: 0.9em; color: #166534;">uv run streamlit run app/Home.py</code>
+                </div>
+            </section>
+
+            <!-- Solution Slide -->
+            <section>
+                <h2>The Solution: Robust Training</h2>
+
+                <div class="two-column">
+                    <div>
+                        <div class="solution-box">
+                            <h3>MDA-DMC</h3>
+                            <p><strong>Multi-Domain Augmentation</strong></p>
+                            <p style="font-size: 0.85em; margin-top: 0.5em;">
+                                Simulate impairments during training. The model learns to recognize signals despite variations.
+                            </p>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="solution-box">
+                            <h3>CLSR-AMC</h3>
+                            <p><strong>Contrastive Learning</strong></p>
+                            <p style="font-size: 0.85em; margin-top: 0.5em;">
+                                Train the model to find features that remain consistent across different conditions.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1.5em;">
+                    <h3>Result: Maintained Accuracy Under Stress</h3>
+                    <div style="display: flex; align-items: center; gap: 1em; margin-top: 1em;">
+                        <div style="flex: 1; text-align: center;">
+                            <div style="font-size: 0.8em; color: #64748b; margin-bottom: 0.3em;">Baseline</div>
+                            <div style="background: linear-gradient(90deg, #22c55e 20%, #dc2626 20%); height: 30px; border-radius: 4px;"></div>
+                            <div style="font-size: 0.75em; color: #991b1b; margin-top: 0.3em;">92% &rarr; 35%</div>
+                        </div>
+                        <div style="flex: 1; text-align: center;">
+                            <div style="font-size: 0.8em; color: #64748b; margin-bottom: 0.3em;">Robust Model</div>
+                            <div style="background: linear-gradient(90deg, #22c55e 75%, #eab308 75%); height: 30px; border-radius: 4px;"></div>
+                            <div style="font-size: 0.75em; color: #166534; margin-top: 0.3em;">92% &rarr; 78%</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.6.1/dist/reveal.js"></script>
+    <script>
+        Reveal.initialize({
+            hash: true,
+            slideNumber: true,
+            transition: 'slide',
+            width: 1200,
+            height: 700,
+            margin: 0.1,
+        });
+    </script>
+</body>
+</html>

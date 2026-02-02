@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
 from robust_amc.data import PowerNormalize, Compose, get_data_loaders
 from robust_amc.data.transforms import ToTensor
-from robust_amc.data.impairments import CarrierFrequencyOffset, IQImbalance
+from robust_amc.data.impairments import CarrierFrequencyOffset, IQImbalance, DCOffset
 from robust_amc.data.channels import RayleighFading
 
 # Import utilities
@@ -243,12 +243,13 @@ elif comparison_type == "Impairment Robustness":
 
     impairment_type = st.selectbox(
         "Impairment Type",
-        ["CFO (Carrier Frequency Offset)", "I/Q Imbalance", "Rayleigh Fading"],
+        ["CFO (Carrier Frequency Offset)", "I/Q Imbalance", "Rayleigh Fading", "Combined Impairments"],
     )
 
     if st.button("Run Robustness Test"):
         with st.spinner("Testing robustness..."):
             results = {}
+            combined_levels = []  # Will be populated for Combined Impairments
 
             if "CFO" in impairment_type:
                 cfo_values = [0, 500, 1000, 2000, 3000, 5000]
@@ -306,7 +307,7 @@ elif comparison_type == "Impairment Robustness":
                         accuracies.append(correct / total)
                     results[model_name] = accuracies
 
-            else:  # Rayleigh Fading
+            elif "Rayleigh" in impairment_type:
                 x_values = ["No Fading", "Rayleigh"]
                 x_label = "Channel"
 
@@ -332,6 +333,58 @@ elif comparison_type == "Impairment Robustness":
                         accuracies.append(correct / total)
                     results[model_name] = accuracies
 
+            else:  # Combined Impairments
+                levels = [
+                    {"name": "Clean", "cfo": 0, "iq_amp": 0, "iq_phase": 0, "dc": 0},
+                    {"name": "Mild", "cfo": 500, "iq_amp": 0.5, "iq_phase": 2, "dc": 0.05},
+                    {"name": "Moderate", "cfo": 1000, "iq_amp": 1.0, "iq_phase": 5, "dc": 0.1},
+                    {"name": "Severe", "cfo": 2000, "iq_amp": 2.0, "iq_phase": 10, "dc": 0.2},
+                ]
+                x_values = [level["name"] for level in levels]
+                x_label = "Impairment Level"
+
+                for model_name, model in models.items():
+                    accuracies = []
+                    for level in levels:
+                        correct = 0
+                        total = 0
+
+                        mask = test_snrs >= 10
+                        for sample, label in zip(test_data[mask][:200], test_labels[mask][:200]):
+                            # Copy sample to avoid modifying original data
+                            s = sample.copy()
+
+                            # Apply combined impairments
+                            if level["cfo"] > 0:
+                                cfo_t = CarrierFrequencyOffset(
+                                    delta_f=level["cfo"], sample_rate=1e6
+                                )
+                                s = cfo_t(s)
+                            if level["iq_amp"] > 0 or level["iq_phase"] > 0:
+                                iq_t = IQImbalance(
+                                    amplitude_imbalance_db=level["iq_amp"],
+                                    phase_imbalance_deg=level["iq_phase"]
+                                )
+                                s = iq_t(s)
+                            if level["dc"] > 0:
+                                dc_t = DCOffset(
+                                    dc_i=level["dc"], dc_q=level["dc"], relative=True
+                                )
+                                s = dc_t(s)
+
+                            transform = Compose([PowerNormalize(), ToTensor()])
+                            x = transform(s).unsqueeze(0)
+                            with torch.no_grad():
+                                pred = model(x).argmax(dim=1).item()
+                            if pred == label:
+                                correct += 1
+                            total += 1
+                        accuracies.append(correct / total)
+                    results[model_name] = accuracies
+
+                # Store levels for display later
+                combined_levels = levels
+
             # Plot results
             fig, ax = plt.subplots(figsize=(10, 6))
             colors = ["#2563eb", "#dc2626", "#16a34a", "#9333ea"]
@@ -351,7 +404,10 @@ elif comparison_type == "Impairment Robustness":
             ax.set_xlabel(x_label)
             ax.set_ylabel("Accuracy")
             ax.set_title(f"Robustness: {impairment_type}")
-            ax.legend(loc="lower left" if "CFO" in impairment_type or "I/Q" in impairment_type else "upper right")
+            if "CFO" in impairment_type or "I/Q" in impairment_type:
+                ax.legend(loc="lower left")
+            else:
+                ax.legend(loc="upper right")
             ax.grid(True, alpha=0.3)
             ax.set_ylim(0, 1)
             st.pyplot(fig)
@@ -364,6 +420,18 @@ elif comparison_type == "Impairment Robustness":
                 worst = min(accs)
                 drop = baseline - worst
                 st.write(f"**{model_name}**: {baseline:.1%} → {worst:.1%} (drop: {drop:.1%})")
+
+            # Show impairment level details for combined impairments
+            if "Combined" in impairment_type:
+                st.markdown("### Impairment Levels")
+                table_data = {
+                    "Level": [lvl["name"] for lvl in combined_levels],
+                    "CFO (Hz)": [lvl["cfo"] for lvl in combined_levels],
+                    "I/Q Amp (dB)": [lvl["iq_amp"] for lvl in combined_levels],
+                    "I/Q Phase (°)": [lvl["iq_phase"] for lvl in combined_levels],
+                    "DC Offset": [lvl["dc"] for lvl in combined_levels],
+                }
+                st.dataframe(table_data, hide_index=True)
 
 # Information section
 with st.expander("About the Models", expanded=False):
