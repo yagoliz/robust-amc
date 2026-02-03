@@ -44,3 +44,7 @@ htmlcov/
 
 # Dataset
 data/
+
+# Cluster
+slurm
+wandb
