@@ -88,6 +88,16 @@ uv run black src tests
 uv run ruff check src tests
 ```
 
-## References
+## Visualizations
 
-See `PLAN.md` for detailed implementation plan and technical specifications.
+```bash
+uv run python scripts/train_baseline.py --wandb --epochs 50
+uv run python scripts/train_mda_dmc.py --wandb --epochs 50
+uv run python scripts/train_clsr_amc.py --wandb --epochs 50
+
+# Compare training runs (after training)
+uv run python scripts/compare_experiments.py
+
+# Analyze embeddings (after training)
+uv run python scripts/analyze_embeddings.py --model all
+```
