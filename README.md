@@ -56,7 +56,7 @@ uv run python scripts/verify_data.py
 
 ## Usage
 
-### Training (coming in Phase 2)
+### Training
 
 ```bash
 # Train baseline PF-CNN
@@ -69,7 +69,7 @@ uv run python scripts/train_mda.py
 uv run python scripts/train_clsr.py
 ```
 
-### Interactive Demo (coming in Phase 5)
+### Interactive Demo
 
 ```bash
 uv run streamlit run app/app.py
