@@ -12,7 +12,9 @@ wheels/
 # Data files (large, download separately)
 data/*.pkl
 data/*.tar.bz2
+data/*.zip
 data/*.h5
+data/*.hdf5
 
 # Model checkpoints
 checkpoints/*.pt
@@ -41,9 +43,6 @@ htmlcov/
 .pytest_cache/
 
 .claude
-
-# Dataset
-data/
 
 # Cluster
 slurm
