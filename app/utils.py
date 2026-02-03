@@ -14,12 +14,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from robust_amc.data import (
     load_radioml2016a,
+    load_radioml2018a,
     stratified_split,
+    stratified_split_2018,
     PowerNormalize,
     Compose,
+    OVERLAPPING_CLASSES,
 )
 from robust_amc.data.transforms import ToTensor
 from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
+from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018, SNR_LEVELS_2018
 from robust_amc.data.channels import RayleighFading, RicianFading
 from robust_amc.data.impairments import (
     CarrierFrequencyOffset,
@@ -31,7 +35,11 @@ from robust_amc.models import PFCNN, CLSRAMC, create_clsr_amc
 
 
 # Default paths
-DATA_PATH = Path("data/RML2016.10a_dict.pkl")
+DATA_PATH_2016 = Path("data/RML2016.10a_dict.pkl")
+DATA_PATH_2018 = Path("data/GOLD_XYZ_OSC.0001_1024.hdf5")
+
+# For backwards compatibility
+DATA_PATH = DATA_PATH_2016
 
 # Model checkpoint paths
 MODEL_CHECKPOINTS = {
@@ -112,21 +120,69 @@ def load_model(checkpoint_path: Path = None) -> PFCNN:
 
 
 @st.cache_data
-def load_dataset(data_path: Path = DATA_PATH) -> dict:
-    """Load and split the dataset (cached)."""
+def load_dataset(data_path: Path = DATA_PATH, dataset_version: str = "2016") -> dict:
+    """Load and split the dataset (cached).
+
+    Args:
+        data_path: Path to dataset file
+        dataset_version: "2016" or "2018"
+
+    Returns:
+        Dictionary with train/val/test splits and metadata
+    """
     if not data_path.exists():
         return None
 
-    data, labels, snrs = load_radioml2016a(data_path)
-    splits = stratified_split(data, labels, snrs)
+    if dataset_version == "2018":
+        data, labels, snrs, class_names = load_radioml2018a(
+            data_path,
+            split_segments=True,
+            overlapping_only=False,
+        )
+        splits = stratified_split_2018(data, labels, snrs)
+        return {
+            "train": splits["train"],
+            "val": splits["val"],
+            "test": splits["test"],
+            "class_names": class_names,
+            "snr_levels": SNR_LEVELS_2018,
+            "dataset_version": "2018",
+        }
+    else:
+        data, labels, snrs = load_radioml2016a(data_path)
+        splits = stratified_split(data, labels, snrs)
+        return {
+            "train": splits["train"],
+            "val": splits["val"],
+            "test": splits["test"],
+            "class_names": MODULATION_CLASSES,
+            "snr_levels": SNR_LEVELS,
+            "dataset_version": "2016",
+        }
 
-    return {
-        "train": splits["train"],
-        "val": splits["val"],
-        "test": splits["test"],
-        "class_names": MODULATION_CLASSES,
-        "snr_levels": SNR_LEVELS,
-    }
+
+def get_available_datasets() -> list[str]:
+    """Get list of available datasets."""
+    available = []
+    if DATA_PATH_2016.exists():
+        available.append("RadioML2016.10a")
+    if DATA_PATH_2018.exists():
+        available.append("RadioML2018.01a")
+    return available
+
+
+def get_dataset_path(dataset_name: str) -> Path:
+    """Get path for a dataset name."""
+    if "2018" in dataset_name:
+        return DATA_PATH_2018
+    return DATA_PATH_2016
+
+
+def get_dataset_version(dataset_name: str) -> str:
+    """Get version string for a dataset name."""
+    if "2018" in dataset_name:
+        return "2018"
+    return "2016"
 
 
 def normalize_signal(signal: np.ndarray, eps: float = 1e-8) -> np.ndarray:

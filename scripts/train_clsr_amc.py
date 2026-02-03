@@ -28,12 +28,15 @@ from tqdm import tqdm
 
 from robust_amc.data import (
     get_data_loaders,
+    get_data_loaders_2018,
     PowerNormalize,
     Compose,
     MDADMCPipeline,
+    OVERLAPPING_CLASSES,
 )
 from robust_amc.data.transforms import ToTensor
-from robust_amc.data.radioml_loader import MODULATION_CLASSES
+from robust_amc.data.radioml_loader import MODULATION_CLASSES as CLASSES_2016
+from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018 as CLASSES_2018
 from robust_amc.models import create_clsr_amc, CLSRAMC
 from robust_amc.models.clsr_amc import CLSRAMCLoss
 from robust_amc.training import WandbLogger
@@ -49,10 +52,34 @@ from robust_amc.evaluation import (
 def parse_args():
     parser = argparse.ArgumentParser(description="Train CLSR-AMC model")
     parser.add_argument(
-        "--data-path",
+        "--dataset",
+        type=str,
+        choices=["2016", "2018"],
+        default="2016",
+        help="Which RadioML dataset to train on",
+    )
+    parser.add_argument(
+        "--data-path-2016",
         type=Path,
         default=Path("data/RML2016.10a_dict.pkl"),
-        help="Path to RadioML dataset",
+        help="Path to RadioML2016.10a dataset",
+    )
+    parser.add_argument(
+        "--data-path-2018",
+        type=Path,
+        default=Path("data/GOLD_XYZ_OSC.0001_1024.hdf5"),
+        help="Path to RadioML2018.01a dataset",
+    )
+    parser.add_argument(
+        "--overlapping-only",
+        action="store_true",
+        help="Only use classes that overlap between 2016 and 2018",
+    )
+    parser.add_argument(
+        "--data-path",
+        type=Path,
+        default=None,
+        help="(Deprecated) Use --data-path-2016 or --data-path-2018",
     )
     parser.add_argument(
         "--epochs",
@@ -75,8 +102,8 @@ def parse_args():
     parser.add_argument(
         "--checkpoint-dir",
         type=Path,
-        default=Path("checkpoints/clsr_amc"),
-        help="Directory to save checkpoints",
+        default=None,
+        help="Directory to save checkpoints (default: checkpoints/clsr_amc_{dataset})",
     )
     parser.add_argument(
         "--results-dir",
@@ -502,18 +529,33 @@ class CLSRAMCTrainer:
 def main():
     args = parse_args()
 
+    # Set default checkpoint directory based on dataset
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = Path(f"checkpoints/clsr_amc_{args.dataset}")
+
     # Create directories
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("Training CLSR-AMC Model")
+    print(f"Training CLSR-AMC Model on RadioML{args.dataset}")
     print("=" * 60)
 
+    if args.dataset == "2016":
+        data_path = args.data_path or args.data_path_2016
+        modulation_classes = CLASSES_2016
+    else:
+        data_path = args.data_path or args.data_path_2018
+        modulation_classes = CLASSES_2018
+
+    if args.overlapping_only:
+        modulation_classes = OVERLAPPING_CLASSES
+        print(f"   Using overlapping classes only: {len(modulation_classes)} classes")
+
     # Check dataset
-    if not args.data_path.exists():
-        print(f"Dataset not found at {args.data_path}")
-        print("Run: python scripts/download_data.py")
+    if not data_path.exists():
+        print(f"Dataset not found at {data_path}")
+        print("Please download the dataset.")
         sys.exit(1)
 
     device = get_device(args.device)
@@ -528,13 +570,26 @@ def main():
     contrastive_aug = ContrastiveAugmentation(aug_prob=args.aug_prob, seed=42)
 
     # Load base datasets
-    base_loaders = get_data_loaders(
-        args.data_path,
-        batch_size=args.batch_size,
-        train_transform=None,  # We'll apply transforms in ContrastiveDataset
-        eval_transform=None,
-        num_workers=args.num_workers,
-    )
+    if args.dataset == "2016":
+        base_loaders = get_data_loaders(
+            data_path,
+            batch_size=args.batch_size,
+            train_transform=None,  # We'll apply transforms in ContrastiveDataset
+            eval_transform=None,
+            num_workers=args.num_workers,
+        )
+    else:
+        base_loaders = get_data_loaders_2018(
+            data_path,
+            batch_size=args.batch_size,
+            train_transform=None,
+            eval_transform=None,
+            num_workers=args.num_workers,
+            split_segments=True,
+            overlapping_only=args.overlapping_only,
+        )
+        if "class_names" in base_loaders:
+            modulation_classes = base_loaders["class_names"]
 
     # Wrap with contrastive dataset
     train_dataset = ContrastiveDataset(
@@ -566,7 +621,7 @@ def main():
 
     # Create model
     print(f"\n3. Creating CLSR-AMC model (variant={args.variant})...")
-    model = create_clsr_amc(num_classes=len(MODULATION_CLASSES), variant=args.variant)
+    model = create_clsr_amc(num_classes=len(modulation_classes), variant=args.variant)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"   Parameters: {n_params:,}")
@@ -585,14 +640,16 @@ def main():
     if args.wandb:
         wandb_logger = WandbLogger(
             project=args.wandb_project,
-            run_name=args.wandb_run_name or "clsr-amc",
+            run_name=args.wandb_run_name or f"clsr-amc-{args.dataset}",
             config={
                 "model": "CLSR-AMC",
                 "variant": args.variant,
                 "learning_rate": args.lr,
                 "batch_size": args.batch_size,
                 "epochs": args.epochs,
-                "dataset": "RadioML2016.10a",
+                "dataset": f"RadioML{args.dataset}",
+                "num_classes": len(modulation_classes),
+                "overlapping_only": args.overlapping_only,
                 "loss_weights": {
                     "contrastive": args.contrastive_weight,
                     "reconstruction": args.reconstruction_weight,
@@ -674,13 +731,24 @@ def main():
 
     # Standard evaluation (single forward pass)
     test_transform = normalize_transform
-    test_loaders = get_data_loaders(
-        args.data_path,
-        batch_size=args.batch_size,
-        train_transform=test_transform,
-        eval_transform=test_transform,
-        num_workers=args.num_workers,
-    )
+    if args.dataset == "2016":
+        test_loaders = get_data_loaders(
+            data_path,
+            batch_size=args.batch_size,
+            train_transform=test_transform,
+            eval_transform=test_transform,
+            num_workers=args.num_workers,
+        )
+    else:
+        test_loaders = get_data_loaders_2018(
+            data_path,
+            batch_size=args.batch_size,
+            train_transform=test_transform,
+            eval_transform=test_transform,
+            num_workers=args.num_workers,
+            split_segments=True,
+            overlapping_only=args.overlapping_only,
+        )
 
     results = evaluate_model(model, test_loaders["test"], device=str(device))
     print(f"   Test Accuracy: {results['accuracy']:.4f}")
@@ -703,7 +771,7 @@ def main():
     fig, ax = plt.subplots(figsize=(12, 10))
     plot_confusion_matrix(
         cm,
-        MODULATION_CLASSES,
+        modulation_classes,
         title="CLSR-AMC Confusion Matrix (All SNRs)",
         ax=ax,
     )
@@ -714,10 +782,10 @@ def main():
     if args.compare_baseline:
         from robust_amc.models import create_pfcnn
 
-        baseline_path = Path("checkpoints/baseline/best_model.pt")
+        baseline_path = Path(f"checkpoints/baseline_{args.dataset}/best_model.pt")
         if baseline_path.exists():
             print("\n8. Comparing with baseline model...")
-            baseline_model = create_pfcnn(num_classes=len(MODULATION_CLASSES))
+            baseline_model = create_pfcnn(num_classes=len(modulation_classes))
             checkpoint = torch.load(baseline_path, map_location=device)
             baseline_model.load_state_dict(checkpoint["model_state_dict"])
             baseline_model.to(device)
@@ -772,7 +840,7 @@ def main():
         wandb_logger.log_confusion_matrix(
             results["targets"],
             results["predictions"],
-            MODULATION_CLASSES,
+            modulation_classes,
             title="CLSR-AMC Confusion Matrix",
         )
         wandb_logger.log_image(

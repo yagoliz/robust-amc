@@ -24,12 +24,15 @@ import torch
 
 from robust_amc.data import (
     get_data_loaders,
+    get_data_loaders_2018,
     PowerNormalize,
     Compose,
     MDADMCPipeline,
+    OVERLAPPING_CLASSES,
 )
 from robust_amc.data.transforms import ToTensor
-from robust_amc.data.radioml_loader import MODULATION_CLASSES
+from robust_amc.data.radioml_loader import MODULATION_CLASSES as CLASSES_2016
+from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018 as CLASSES_2018
 from robust_amc.data.impairments import CarrierFrequencyOffset, IQImbalance
 from robust_amc.data.channels import RayleighFading
 from robust_amc.models import create_pfcnn
@@ -47,10 +50,34 @@ from robust_amc.evaluation import (
 def parse_args():
     parser = argparse.ArgumentParser(description="Train PF-CNN with MDA-DMC augmentation")
     parser.add_argument(
-        "--data-path",
+        "--dataset",
+        type=str,
+        choices=["2016", "2018"],
+        default="2016",
+        help="Which RadioML dataset to train on",
+    )
+    parser.add_argument(
+        "--data-path-2016",
         type=Path,
         default=Path("data/RML2016.10a_dict.pkl"),
-        help="Path to RadioML dataset",
+        help="Path to RadioML2016.10a dataset",
+    )
+    parser.add_argument(
+        "--data-path-2018",
+        type=Path,
+        default=Path("data/GOLD_XYZ_OSC.0001_1024.hdf5"),
+        help="Path to RadioML2018.01a dataset",
+    )
+    parser.add_argument(
+        "--overlapping-only",
+        action="store_true",
+        help="Only use classes that overlap between 2016 and 2018",
+    )
+    parser.add_argument(
+        "--data-path",
+        type=Path,
+        default=None,
+        help="(Deprecated) Use --data-path-2016 or --data-path-2018",
     )
     parser.add_argument(
         "--epochs",
@@ -73,8 +100,8 @@ def parse_args():
     parser.add_argument(
         "--checkpoint-dir",
         type=Path,
-        default=Path("checkpoints/mda_dmc"),
-        help="Directory to save checkpoints",
+        default=None,
+        help="Directory to save checkpoints (default: checkpoints/mda_dmc_{dataset})",
     )
     parser.add_argument(
         "--results-dir",
@@ -257,18 +284,32 @@ def evaluate_robustness(model, test_loader, device):
 def main():
     args = parse_args()
 
+    # Set default checkpoint directory based on dataset
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = Path(f"checkpoints/mda_dmc_{args.dataset}")
+
     # Create directories
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("Training PF-CNN with MDA-DMC Augmentation")
+    print(f"Training PF-CNN with MDA-DMC on RadioML{args.dataset}")
     print("=" * 60)
 
+    # Determine data path
+    if args.dataset == "2016":
+        data_path = args.data_path or args.data_path_2016
+        modulation_classes = CLASSES_2016
+    else:
+        data_path = args.data_path or args.data_path_2018
+        modulation_classes = CLASSES_2018
+
+    if args.overlapping_only:
+        modulation_classes = OVERLAPPING_CLASSES
+
     # Check dataset
-    if not args.data_path.exists():
-        print(f"Dataset not found at {args.data_path}")
-        print("Run: python scripts/download_data.py")
+    if not data_path.exists():
+        print(f"Dataset not found at {data_path}")
         sys.exit(1)
 
     # Create MDA-DMC augmentation pipeline
@@ -291,20 +332,36 @@ def main():
 
     # Load data
     print("\n2. Loading data...")
-    loaders = get_data_loaders(
-        args.data_path,
-        batch_size=args.batch_size,
-        train_transform=train_transform,
-        eval_transform=eval_transform,
-        num_workers=args.num_workers,
-    )
+    if args.dataset == "2016":
+        loaders = get_data_loaders(
+            data_path,
+            batch_size=args.batch_size,
+            train_transform=train_transform,
+            eval_transform=eval_transform,
+            num_workers=args.num_workers,
+        )
+    else:
+        loaders = get_data_loaders_2018(
+            data_path,
+            batch_size=args.batch_size,
+            train_transform=train_transform,
+            eval_transform=eval_transform,
+            num_workers=args.num_workers,
+            split_segments=True,
+            overlapping_only=args.overlapping_only,
+        )
+        if "class_names" in loaders:
+            modulation_classes = loaders["class_names"]
+
+    print(f"   Dataset: RadioML{args.dataset}")
     print(f"   Train: {len(loaders['train'].dataset)} samples")
     print(f"   Val:   {len(loaders['val'].dataset)} samples")
     print(f"   Test:  {len(loaders['test'].dataset)} samples")
+    print(f"   Classes: {len(modulation_classes)}")
 
     # Create model
     print("\n3. Creating model...")
-    model = create_pfcnn(num_classes=len(MODULATION_CLASSES), variant="default")
+    model = create_pfcnn(num_classes=len(modulation_classes), variant="default")
 
     # Count parameters
     n_params = sum(p.numel() for p in model.parameters())
@@ -397,7 +454,7 @@ def main():
     fig, ax = plt.subplots(figsize=(12, 10))
     plot_confusion_matrix(
         cm,
-        MODULATION_CLASSES,
+        modulation_classes,
         title="PF-CNN + MDA-DMC Confusion Matrix (All SNRs)",
         ax=ax,
     )
@@ -409,7 +466,7 @@ def main():
         baseline_path = Path("checkpoints/baseline/best_model.pt")
         if baseline_path.exists():
             print("\n8. Comparing with baseline model...")
-            baseline_model = create_pfcnn(num_classes=len(MODULATION_CLASSES), variant="default")
+            baseline_model = create_pfcnn(num_classes=len(modulation_classes), variant="default")
             checkpoint = torch.load(baseline_path, map_location=config.device)
             baseline_model.load_state_dict(checkpoint["model_state_dict"])
             baseline_model.to(config.device)
@@ -463,7 +520,7 @@ def main():
         wandb_logger.log_confusion_matrix(
             results["targets"],
             results["predictions"],
-            MODULATION_CLASSES,
+            modulation_classes,
             title="MDA-DMC Confusion Matrix",
         )
         wandb_logger.log_image(

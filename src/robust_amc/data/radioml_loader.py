@@ -97,7 +97,6 @@ def load_radioml2016a(
     if not data_path.exists():
         raise FileNotFoundError(
             f"Dataset not found at {data_path}. "
-            "Please download RadioML2016.10a from https://www.deepsig.ai/datasets"
         )
 
     with open(data_path, "rb") as f:

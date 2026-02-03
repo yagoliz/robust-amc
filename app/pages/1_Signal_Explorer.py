@@ -9,11 +9,15 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
-
 # Import utilities
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import load_dataset, get_samples_for_modulation
+from utils import (
+    load_dataset,
+    get_samples_for_modulation,
+    get_available_datasets,
+    get_dataset_path,
+    get_dataset_version,
+)
 
 # Configure matplotlib
 plt.rcParams.update({
@@ -28,28 +32,49 @@ AXIS_LIMIT = 3.0
 st.set_page_config(page_title="Signal Explorer", page_icon="📊", layout="wide")
 
 st.title("Signal Explorer")
-st.markdown("Visualize I/Q signals and constellation diagrams from RadioML2016.10a.")
+st.markdown("Visualize I/Q signals and constellation diagrams.")
+
+# Dataset selection
+available_datasets = get_available_datasets()
+if not available_datasets:
+    st.error("No datasets found. Please download RadioML2016.10a or RadioML2018.01a.")
+    st.stop()
+
+st.sidebar.header("Dataset")
+selected_dataset = st.sidebar.selectbox("Dataset", available_datasets)
 
 # Load data
-dataset = load_dataset()
+data_path = get_dataset_path(selected_dataset)
+dataset_version = get_dataset_version(selected_dataset)
+dataset = load_dataset(data_path, dataset_version)
 
 if dataset is None:
-    st.error("Dataset not found. Please download RadioML2016.10a to `data/RML2016.10a_dict.pkl`")
+    st.error(f"Failed to load {selected_dataset}.")
     st.stop()
+
+# Get class names and SNR levels for selected dataset
+class_names = dataset["class_names"]
+snr_levels = dataset["snr_levels"]
 
 # Sidebar controls
 st.sidebar.header("Signal Selection")
 
+# Find a good default modulation (QPSK if available)
+default_mod_idx = class_names.index("QPSK") if "QPSK" in class_names else 0
+
 modulation = st.sidebar.selectbox(
     "Modulation",
-    MODULATION_CLASSES,
-    index=MODULATION_CLASSES.index("QPSK"),
+    class_names,
+    index=default_mod_idx,
 )
+
+# Find a good default SNR
+default_snr = 10 if 10 in snr_levels else snr_levels[len(snr_levels) // 2]
 
 snr = st.sidebar.select_slider(
     "SNR (dB)",
-    options=SNR_LEVELS,
-    value=10,
+    options=snr_levels,
+    value=default_snr,
 )
 
 n_samples = st.sidebar.slider("Samples to display", 5, 50, 20)
@@ -98,7 +123,8 @@ with col2:
     sample = samples[sample_idx]
 
     fig, axes = plt.subplots(2, 1, figsize=(6, 4), sharex=True)
-    t = np.arange(128)
+    seq_len = sample.shape[1]
+    t = np.arange(seq_len)
 
     axes[0].plot(t, sample[0], "-", linewidth=1, color="#2563eb")
     axes[0].set_ylabel("I")
@@ -117,7 +143,13 @@ with col2:
 st.markdown("---")
 st.subheader("SNR Comparison")
 
-snr_list = [-10, 0, 10, 18]
+# Pick 4 representative SNRs from available range
+available_snrs = snr_levels
+snr_list = [s for s in [-10, 0, 10, 18] if s in available_snrs]
+if len(snr_list) < 4:
+    # Fill with evenly spaced SNRs
+    step = max(1, len(available_snrs) // 4)
+    snr_list = available_snrs[::step][:4]
 fig, axes = plt.subplots(1, 4, figsize=(14, 3.5))
 
 for ax, snr_val in zip(axes, snr_list):
@@ -150,10 +182,13 @@ plt.close(fig)
 # Modulation comparison
 st.subheader("Modulation Comparison")
 
+# Default modulations that are commonly available
+default_compare = [m for m in ["BPSK", "QPSK", "8PSK", "QAM16", "16QAM"] if m in class_names][:4]
+
 compare_mods = st.multiselect(
     "Select modulations",
-    MODULATION_CLASSES,
-    default=["BPSK", "QPSK", "8PSK", "QAM16"],
+    class_names,
+    default=default_compare,
 )
 
 if compare_mods:
