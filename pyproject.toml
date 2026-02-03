@@ -17,6 +17,7 @@ dependencies = [
     "streamlit>=1.53.1",
     "torch>=2.10.0",
     "tqdm>=4.67.2",
+    "wandb>=0.24.1",
     "watchdog>=6.0.0",
 ]
 

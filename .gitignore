@@ -41,3 +41,6 @@ htmlcov/
 .pytest_cache/
 
 .claude
+
+# Dataset
+data/

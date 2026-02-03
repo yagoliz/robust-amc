@@ -36,6 +36,7 @@ from robust_amc.data.transforms import ToTensor
 from robust_amc.data.radioml_loader import MODULATION_CLASSES
 from robust_amc.models import create_clsr_amc, CLSRAMC
 from robust_amc.models.clsr_amc import CLSRAMCLoss
+from robust_amc.training import WandbLogger
 from robust_amc.evaluation import (
     evaluate_model,
     evaluate_snr_sweep,
@@ -141,6 +142,24 @@ def parse_args():
         action="store_true",
         help="Compare with baseline model",
     )
+    # Weights & Biases arguments
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Enable Weights & Biases logging",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="robust-amc",
+        help="W&B project name",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        type=str,
+        default=None,
+        help="W&B run name (default: auto-generated)",
+    )
     return parser.parse_args()
 
 
@@ -201,7 +220,7 @@ class ContrastiveDataset(Dataset):
 
 @dataclass
 class CLSRAMCTrainingHistory:
-    """Training history for CLSR-AMC."""
+    """Training history for CLSR-AMC with diagnostic metrics."""
     train_loss: list = field(default_factory=list)
     train_contrastive: list = field(default_factory=list)
     train_reconstruction: list = field(default_factory=list)
@@ -211,6 +230,9 @@ class CLSRAMCTrainingHistory:
     val_acc: list = field(default_factory=list)
     best_val_acc: float = 0.0
     best_epoch: int = 0
+    # Diagnostic fields
+    learning_rates: list = field(default_factory=list)
+    gradient_norms: list = field(default_factory=list)
 
 
 class CLSRAMCTrainer:
@@ -257,6 +279,7 @@ class CLSRAMCTrainer:
         total_cls = 0.0
         correct = 0
         total = 0
+        gradient_norms = []
 
         pbar = tqdm(train_loader, desc="Training", leave=False)
         for batch in pbar:
@@ -282,6 +305,11 @@ class CLSRAMCTrainer:
 
             # Backward pass
             losses["total"].backward()
+
+            # Compute gradient norm before optimizer step
+            grad_norm = self._compute_gradient_norm()
+            gradient_norms.append(grad_norm)
+
             self.optimizer.step()
 
             # Track metrics
@@ -300,13 +328,24 @@ class CLSRAMCTrainer:
                 acc=correct / total,
             )
 
+        avg_grad_norm = sum(gradient_norms) / len(gradient_norms) if gradient_norms else 0.0
+
         return {
             "loss": total_loss / total,
             "contrastive": total_con / total,
             "reconstruction": total_rec / total,
             "classification": total_cls / total,
             "accuracy": correct / total,
+            "gradient_norm": avg_grad_norm,
         }
+
+    def _compute_gradient_norm(self) -> float:
+        """Compute total gradient L2 norm across all parameters."""
+        total_norm = 0.0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                total_norm += p.grad.data.norm(2).item() ** 2
+        return total_norm ** 0.5
 
     @torch.no_grad()
     def evaluate(self, val_loader: DataLoader) -> dict:
@@ -349,6 +388,7 @@ class CLSRAMCTrainer:
         val_loader: DataLoader,
         epochs: int = 100,
         verbose: bool = True,
+        wandb_logger=None,
     ) -> CLSRAMCTrainingHistory:
         """Train the model."""
         for epoch in range(epochs):
@@ -359,6 +399,7 @@ class CLSRAMCTrainer:
             self.history.train_reconstruction.append(train_metrics["reconstruction"])
             self.history.train_classification.append(train_metrics["classification"])
             self.history.train_acc.append(train_metrics["accuracy"])
+            self.history.gradient_norms.append(train_metrics["gradient_norm"])
 
             # Validate
             val_metrics = self.evaluate(val_loader)
@@ -368,9 +409,12 @@ class CLSRAMCTrainer:
             # Learning rate scheduling
             self.scheduler.step(val_metrics["loss"])
 
+            # Track learning rate
+            lr = self.optimizer.param_groups[0]["lr"]
+            self.history.learning_rates.append(lr)
+
             # Logging
             if verbose:
-                lr = self.optimizer.param_groups[0]["lr"]
                 print(
                     f"Epoch {epoch + 1:3d}/{epochs} | "
                     f"Loss: {train_metrics['loss']:.4f} | "
@@ -380,6 +424,25 @@ class CLSRAMCTrainer:
                     f"Acc: {train_metrics['accuracy']:.4f} | "
                     f"Val Acc: {val_metrics['accuracy']:.4f} | "
                     f"LR: {lr:.2e}"
+                )
+
+            # Log to wandb if enabled
+            if wandb_logger is not None:
+                wandb_logger.log_metrics(
+                    epoch=epoch + 1,
+                    train_loss=train_metrics["loss"],
+                    train_acc=train_metrics["accuracy"],
+                    val_loss=val_metrics["loss"],
+                    val_acc=val_metrics["accuracy"],
+                    learning_rate=lr,
+                    gradient_norm=train_metrics["gradient_norm"],
+                )
+                wandb_logger.log_loss_components(
+                    epoch=epoch + 1,
+                    contrastive=train_metrics["contrastive"],
+                    reconstruction=train_metrics["reconstruction"],
+                    classification=train_metrics["classification"],
+                    total=train_metrics["loss"],
                 )
 
             # Check for best model
@@ -424,6 +487,8 @@ class CLSRAMCTrainer:
                 "val_acc": self.history.val_acc,
                 "best_val_acc": self.history.best_val_acc,
                 "best_epoch": self.history.best_epoch,
+                "learning_rates": self.history.learning_rates,
+                "gradient_norms": self.history.gradient_norms,
             },
         }
         torch.save(checkpoint, path)
@@ -515,6 +580,31 @@ def main():
         temperature=args.temperature,
     )
 
+    # Initialize W&B logger if enabled
+    wandb_logger = None
+    if args.wandb:
+        wandb_logger = WandbLogger(
+            project=args.wandb_project,
+            run_name=args.wandb_run_name or "clsr-amc",
+            config={
+                "model": "CLSR-AMC",
+                "variant": args.variant,
+                "learning_rate": args.lr,
+                "batch_size": args.batch_size,
+                "epochs": args.epochs,
+                "dataset": "RadioML2016.10a",
+                "loss_weights": {
+                    "contrastive": args.contrastive_weight,
+                    "reconstruction": args.reconstruction_weight,
+                    "classification": args.classification_weight,
+                },
+                "temperature": args.temperature,
+                "aug_prob": args.aug_prob,
+            },
+        )
+        wandb_logger.log_model_summary("CLSR-AMC", n_params)
+        print("   W&B logging enabled")
+
     # Create trainer
     trainer = CLSRAMCTrainer(
         model=model,
@@ -526,7 +616,9 @@ def main():
 
     # Train
     print("\n4. Training...")
-    history = trainer.fit(train_loader, val_loader, epochs=args.epochs, verbose=True)
+    history = trainer.fit(
+        train_loader, val_loader, epochs=args.epochs, verbose=True, wandb_logger=wandb_logger
+    )
 
     # Save final model
     trainer.save_checkpoint(args.checkpoint_dir / "final_model.pt")
@@ -673,6 +765,21 @@ def main():
 
     with open(args.results_dir / "clsr_amc_results.json", "w") as f:
         json.dump(results_data, f, indent=2)
+
+    # Log final metrics to W&B
+    if wandb_logger is not None:
+        wandb_logger.log_snr_accuracy(snr_values, accuracies, "clsr_amc")
+        wandb_logger.log_confusion_matrix(
+            results["targets"],
+            results["predictions"],
+            MODULATION_CLASSES,
+            title="CLSR-AMC Confusion Matrix",
+        )
+        wandb_logger.log_image(
+            "training_history",
+            str(args.results_dir / "clsr_amc_training_history.png"),
+        )
+        wandb_logger.finish()
 
     print("\n" + "=" * 60)
     print("Training complete!")

@@ -33,7 +33,7 @@ from robust_amc.data.radioml_loader import MODULATION_CLASSES
 from robust_amc.data.impairments import CarrierFrequencyOffset, IQImbalance
 from robust_amc.data.channels import RayleighFading
 from robust_amc.models import create_pfcnn
-from robust_amc.training import Trainer, TrainingConfig
+from robust_amc.training import Trainer, TrainingConfig, WandbLogger
 from robust_amc.evaluation import (
     evaluate_model,
     evaluate_snr_sweep,
@@ -151,6 +151,24 @@ def parse_args():
         "--compare-baseline",
         action="store_true",
         help="Load baseline model and compare robustness",
+    )
+    # Weights & Biases arguments
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Enable Weights & Biases logging",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="robust-amc",
+        help="W&B project name",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        type=str,
+        default=None,
+        help="W&B run name (default: auto-generated)",
     )
     return parser.parse_args()
 
@@ -302,10 +320,37 @@ def main():
     )
     print(f"   Device: {config.device}")
 
+    # Initialize W&B logger if enabled
+    wandb_logger = None
+    if args.wandb:
+        wandb_logger = WandbLogger(
+            project=args.wandb_project,
+            run_name=args.wandb_run_name or "mda-dmc",
+            config={
+                "model": "PF-CNN",
+                "method": "MDA-DMC",
+                "learning_rate": args.lr,
+                "batch_size": args.batch_size,
+                "epochs": args.epochs,
+                "dataset": "RadioML2016.10a",
+                "augmentation": {
+                    "agn": not args.no_agn,
+                    "rsc": not args.no_rsc,
+                    "ssc": not args.no_ssc,
+                    "prob": args.aug_prob,
+                    "agn_snr_range": [args.agn_snr_min, args.agn_snr_max],
+                    "rsc_angle_range": [-args.rsc_angle_max, args.rsc_angle_max],
+                    "ssc_scale_range": [args.ssc_scale_min, args.ssc_scale_max],
+                },
+            },
+        )
+        wandb_logger.log_model_summary("PF-CNN + MDA-DMC", n_params)
+        print("   W&B logging enabled")
+
     # Train
     print("\n4. Training with MDA-DMC...")
     trainer = Trainer(model, config)
-    history = trainer.fit(loaders["train"], loaders["val"], verbose=True)
+    history = trainer.fit(loaders["train"], loaders["val"], verbose=True, wandb_logger=wandb_logger)
 
     # Save final model
     trainer.save_checkpoint(args.checkpoint_dir / "final_model.pt")
@@ -411,6 +456,21 @@ def main():
 
     with open(args.results_dir / "mda_dmc_results.json", "w") as f:
         json.dump(results_data, f, indent=2)
+
+    # Log final metrics to W&B
+    if wandb_logger is not None:
+        wandb_logger.log_snr_accuracy(snr_values, accuracies, "mda_dmc")
+        wandb_logger.log_confusion_matrix(
+            results["targets"],
+            results["predictions"],
+            MODULATION_CLASSES,
+            title="MDA-DMC Confusion Matrix",
+        )
+        wandb_logger.log_image(
+            "training_history",
+            str(args.results_dir / "mda_dmc_training_history.png"),
+        )
+        wandb_logger.finish()
 
     print("\n" + "=" * 60)
     print("Training complete!")

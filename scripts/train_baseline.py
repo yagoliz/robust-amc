@@ -15,7 +15,7 @@ from robust_amc.data import get_data_loaders, PowerNormalize, Compose
 from robust_amc.data.transforms import ToTensor
 from robust_amc.data.radioml_loader import MODULATION_CLASSES
 from robust_amc.models import create_pfcnn
-from robust_amc.training import Trainer, TrainingConfig
+from robust_amc.training import Trainer, TrainingConfig, WandbLogger
 from robust_amc.evaluation import (
     evaluate_model,
     evaluate_snr_sweep,
@@ -77,6 +77,24 @@ def parse_args():
         default=0,
         help="Number of data loading workers (0 for macOS, 4+ for Linux/cluster)",
     )
+    # Weights & Biases arguments
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Enable Weights & Biases logging",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="robust-amc",
+        help="W&B project name",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        type=str,
+        default=None,
+        help="W&B run name (default: auto-generated)",
+    )
     return parser.parse_args()
 
 
@@ -131,10 +149,28 @@ def main():
     )
     print(f"   Device: {config.device}")
 
+    # Initialize W&B logger if enabled
+    wandb_logger = None
+    if args.wandb:
+        wandb_logger = WandbLogger(
+            project=args.wandb_project,
+            run_name=args.wandb_run_name or "baseline",
+            config={
+                "model": "PF-CNN",
+                "variant": "default",
+                "learning_rate": args.lr,
+                "batch_size": args.batch_size,
+                "epochs": args.epochs,
+                "dataset": "RadioML2016.10a",
+            },
+        )
+        wandb_logger.log_model_summary("PF-CNN Baseline", n_params)
+        print("   W&B logging enabled")
+
     # Train
     print("\n3. Training...")
     trainer = Trainer(model, config)
-    history = trainer.fit(loaders["train"], loaders["val"], verbose=True)
+    history = trainer.fit(loaders["train"], loaders["val"], verbose=True, wandb_logger=wandb_logger)
 
     # Save final model
     trainer.save_checkpoint(args.checkpoint_dir / "final_model.pt")
@@ -214,6 +250,21 @@ def main():
         dpi=150, bbox_inches="tight"
     )
     plt.close(fig)
+
+    # Log final metrics to W&B
+    if wandb_logger is not None:
+        wandb_logger.log_snr_accuracy(snr_values, accuracies, "baseline")
+        wandb_logger.log_confusion_matrix(
+            results["targets"],
+            results["predictions"],
+            MODULATION_CLASSES,
+            title="Baseline Confusion Matrix",
+        )
+        wandb_logger.log_image(
+            "training_history",
+            str(args.results_dir / "baseline_training_history.png"),
+        )
+        wandb_logger.finish()
 
     print("\n" + "=" * 60)
     print("Training complete!")
