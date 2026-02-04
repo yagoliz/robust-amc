@@ -11,14 +11,14 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from robust_amc.data import Compose, PowerNormalize, RadioMLDataset, OVERLAPPING_CLASSES
+from robust_amc.data import OVERLAPPING_CLASSES, Compose, PowerNormalize, RadioMLDataset
 from robust_amc.data.channels import RayleighFading, RicianFading
 from robust_amc.data.impairments import CarrierFrequencyOffset, DCOffset, IQImbalance
-from robust_amc.data.radioml_loader import MODULATION_CLASSES
 from robust_amc.data.radioml2018_loader import (
-    MODULATION_CLASSES_2018,
     CLASS_NAME_MAPPING_2018_TO_2016,
+    MODULATION_CLASSES_2018,
 )
+from robust_amc.data.radioml_loader import MODULATION_CLASSES
 from robust_amc.data.transforms import ToTensor
 from robust_amc.evaluation.metrics import evaluate_model
 from robust_amc.utils import get_device
@@ -26,13 +26,13 @@ from robust_amc.utils import get_device
 # Import utilities
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import (
-    load_dataset,
-    load_model_by_name,
-    get_available_models,
+    DATA_PATH_2018,
     get_available_datasets,
+    get_available_models,
     get_dataset_path,
     get_dataset_version,
-    DATA_PATH_2018,
+    load_dataset,
+    load_model_by_name,
 )
 
 # Configure matplotlib

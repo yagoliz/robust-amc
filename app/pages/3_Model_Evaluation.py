@@ -12,8 +12,8 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from robust_amc.data import Compose, PowerNormalize, RadioMLDataset
-from robust_amc.data.radioml_loader import class_names, SNR_LEVELS
-from robust_amc.data.radioml2018_loader import class_names_2018, SNR_LEVELS_2018
+from robust_amc.data.radioml2018_loader import SNR_LEVELS_2018
+from robust_amc.data.radioml_loader import SNR_LEVELS
 from robust_amc.data.transforms import ToTensor
 from robust_amc.evaluation.metrics import (
     accuracy_by_snr,
@@ -25,12 +25,12 @@ from robust_amc.utils import get_device
 # Import utilities
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import (
+    DATA_PATH_2018,
+    get_available_models,
+    get_model_class_names,
+    is_model_2018,
     load_dataset,
     load_model_by_name,
-    get_available_models,
-    is_model_2018,
-    get_model_class_names,
-    DATA_PATH_2018,
 )
 
 # Configure matplotlib
