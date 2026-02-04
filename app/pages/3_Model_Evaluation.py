@@ -12,8 +12,8 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from robust_amc.data import Compose, PowerNormalize, RadioMLDataset
-from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
-from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018, SNR_LEVELS_2018
+from robust_amc.data.radioml_loader import class_names, SNR_LEVELS
+from robust_amc.data.radioml2018_loader import class_names_2018, SNR_LEVELS_2018
 from robust_amc.data.transforms import ToTensor
 from robust_amc.evaluation.metrics import (
     accuracy_by_snr,
@@ -177,8 +177,8 @@ if st.session_state.get("eval_complete", False):
     im = ax.imshow(cm, cmap="Blues", vmin=0, vmax=1)
 
     # Simplified labels - only show values > 0.05 to reduce clutter
-    for i in range(len(MODULATION_CLASSES)):
-        for j in range(len(MODULATION_CLASSES)):
+    for i in range(len(class_names)):
+        for j in range(len(class_names)):
             val = cm[i, j]
             if val > 0.05:  # Only show significant values
                 color = "white" if val > 0.5 else "black"
@@ -186,10 +186,10 @@ if st.session_state.get("eval_complete", False):
                 ax.text(j, i, f"{val:.0%}", ha="center", va="center",
                        color=color, fontsize=9, fontweight='bold' if i == j else 'normal')
 
-    ax.set_xticks(range(len(MODULATION_CLASSES)))
-    ax.set_yticks(range(len(MODULATION_CLASSES)))
-    ax.set_xticklabels(MODULATION_CLASSES, rotation=45, ha="right", fontsize=9)
-    ax.set_yticklabels(MODULATION_CLASSES, fontsize=9)
+    ax.set_xticks(range(len(class_names)))
+    ax.set_yticks(range(len(class_names)))
+    ax.set_xticklabels(class_names, rotation=45, ha="right", fontsize=9)
+    ax.set_yticklabels(class_names, fontsize=9)
     ax.set_xlabel("Predicted")
     ax.set_ylabel("True")
 
@@ -204,7 +204,7 @@ if st.session_state.get("eval_complete", False):
     st.subheader("Per-Class Accuracy")
 
     class_acc = {}
-    for i, mod in enumerate(MODULATION_CLASSES):
+    for i, mod in enumerate(class_names):
         class_mask = results["targets"] == i
         if class_mask.sum() > 0:
             class_acc[mod] = (results["predictions"][class_mask] == i).mean()
@@ -254,8 +254,8 @@ if st.session_state.get("eval_complete", False):
         # Common confusions
         st.markdown("**Common confusions** (>10%):")
         confusions = []
-        for i, mod_true in enumerate(MODULATION_CLASSES):
-            for j, mod_pred in enumerate(MODULATION_CLASSES):
+        for i, mod_true in enumerate(class_names):
+            for j, mod_pred in enumerate(class_names):
                 if i != j and cm[i, j] > 0.1:
                     confusions.append((mod_true, mod_pred, cm[i, j]))
 
