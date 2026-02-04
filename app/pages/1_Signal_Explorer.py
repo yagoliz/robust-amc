@@ -77,7 +77,7 @@ snr = st.sidebar.select_slider(
     value=default_snr,
 )
 
-n_samples = st.sidebar.slider("Samples to display", 5, 50, 20)
+n_samples = st.sidebar.slider("Samples to display", 1, 20, 1)
 
 # Use test set
 test_data, test_labels, test_snrs = dataset["test"]
@@ -85,7 +85,8 @@ test_data, test_labels, test_snrs = dataset["test"]
 # Get samples
 samples = get_samples_for_modulation(
     test_data, test_labels, test_snrs,
-    modulation, snr, n_samples
+    modulation, snr, n_samples,
+    class_names=class_names,
 )
 
 if samples is None:
@@ -155,7 +156,8 @@ fig, axes = plt.subplots(1, 4, figsize=(14, 3.5))
 for ax, snr_val in zip(axes, snr_list):
     samples_snr = get_samples_for_modulation(
         test_data, test_labels, test_snrs,
-        modulation, snr_val, 20
+        modulation, snr_val, 20,
+        class_names=class_names,
     )
 
     if samples_snr is not None:
@@ -212,7 +214,8 @@ if compare_mods:
 
         samples_mod = get_samples_for_modulation(
             test_data, test_labels, test_snrs,
-            mod, snr, 20
+            mod, snr, 20,
+            class_names=class_names,
         )
 
         if samples_mod is not None:

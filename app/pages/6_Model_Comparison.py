@@ -12,7 +12,11 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
-from robust_amc.data import PowerNormalize, Compose, get_data_loaders
+from robust_amc.data.radioml2018_loader import (
+    MODULATION_CLASSES_2018,
+    CLASS_NAME_MAPPING_2018_TO_2016,
+)
+from robust_amc.data import PowerNormalize, Compose, get_data_loaders, OVERLAPPING_CLASSES
 from robust_amc.data.transforms import ToTensor
 from robust_amc.data.impairments import CarrierFrequencyOffset, IQImbalance, DCOffset
 from robust_amc.data.channels import RayleighFading
@@ -22,11 +26,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import (
     load_dataset,
     get_available_models,
+    get_available_datasets,
     load_model_by_name,
     get_samples_for_modulation,
     predict_modulation,
     normalize_samples,
     DATA_PATH,
+    DATA_PATH_2018,
 )
 
 # Configure matplotlib
@@ -241,9 +247,16 @@ elif comparison_type == "SNR Sweep":
 elif comparison_type == "Impairment Robustness":
     st.subheader("Robustness Under Impairments")
 
+    # Check if 2018 dataset is available
+    has_2018 = "RadioML2018.01a" in get_available_datasets()
+
+    impairment_options = ["CFO (Carrier Frequency Offset)", "I/Q Imbalance", "Rayleigh Fading", "Combined Impairments"]
+    if has_2018:
+        impairment_options.insert(0, "Cross-Dataset (2016→2018)")
+
     impairment_type = st.selectbox(
         "Impairment Type",
-        ["CFO (Carrier Frequency Offset)", "I/Q Imbalance", "Rayleigh Fading", "Combined Impairments"],
+        impairment_options,
     )
 
     if st.button("Run Robustness Test"):
@@ -251,7 +264,146 @@ elif comparison_type == "Impairment Robustness":
             results = {}
             combined_levels = []  # Will be populated for Combined Impairments
 
-            if "CFO" in impairment_type:
+            if "Cross-Dataset" in impairment_type:
+                st.markdown("""
+                Testing models trained on **RadioML2016** against **RadioML2018** test data.
+                Only the 8 overlapping classes are used.
+                """)
+
+                # Load 2018 dataset
+                dataset_2018 = load_dataset(DATA_PATH_2018, "2018")
+
+                if dataset_2018 is None:
+                    st.error("Failed to load RadioML2018 dataset.")
+                    st.stop()
+
+                # Get 2018 test data
+                test_2018_data, test_2018_labels, test_2018_snrs = dataset_2018["test"]
+                class_names_2018 = dataset_2018["class_names"]
+
+                # Build mapping from 2018 class indices to 2016 class indices
+                class_2018_to_2016_idx = {}
+                for cls_2018, cls_2016 in CLASS_NAME_MAPPING_2018_TO_2016.items():
+                    if cls_2018 in class_names_2018 and cls_2016 in MODULATION_CLASSES:
+                        idx_2018 = class_names_2018.index(cls_2018)
+                        idx_2016 = MODULATION_CLASSES.index(cls_2016)
+                        class_2018_to_2016_idx[idx_2018] = idx_2016
+
+                # Filter 2018 data to overlapping classes
+                overlapping_mask = np.isin(test_2018_labels, list(class_2018_to_2016_idx.keys()))
+                filtered_2018_data = test_2018_data[overlapping_mask]
+                filtered_2018_labels_orig = test_2018_labels[overlapping_mask]
+                filtered_2018_snrs = test_2018_snrs[overlapping_mask]
+
+                # Remap 2018 labels to 2016 indices
+                filtered_2018_labels = np.array([class_2018_to_2016_idx[l] for l in filtered_2018_labels_orig])
+
+                # Filter 2016 data to overlapping classes
+                overlapping_2016_indices = [MODULATION_CLASSES.index(c) for c in OVERLAPPING_CLASSES if c in MODULATION_CLASSES]
+                mask_2016 = np.isin(test_labels, overlapping_2016_indices)
+                filtered_2016_data = test_data[mask_2016]
+                filtered_2016_labels = test_labels[mask_2016]
+                filtered_2016_snrs = test_snrs[mask_2016]
+
+                # Subsample for speed (use high SNR samples)
+                high_snr_mask_2016 = filtered_2016_snrs >= 0
+                high_snr_mask_2018 = filtered_2018_snrs >= 0
+
+                eval_2016_data = filtered_2016_data[high_snr_mask_2016][:500]
+                eval_2016_labels = filtered_2016_labels[high_snr_mask_2016][:500]
+                eval_2018_data = filtered_2018_data[high_snr_mask_2018][:500]
+                eval_2018_labels = filtered_2018_labels[high_snr_mask_2018][:500]
+
+                st.info(f"Evaluating on {len(eval_2016_labels)} samples from 2016 and {len(eval_2018_labels)} samples from 2018 (SNR ≥ 0 dB)")
+
+                transform = Compose([PowerNormalize(), ToTensor()])
+
+                # Evaluate each model on both datasets
+                results_2016 = {}
+                results_2018 = {}
+
+                progress = st.progress(0)
+                total_evals = len(models) * 2
+
+                for i, (model_name, model) in enumerate(models.items()):
+                    # Evaluate on 2016
+                    correct = 0
+                    for sample, label in zip(eval_2016_data, eval_2016_labels):
+                        x = transform(sample).unsqueeze(0)
+                        with torch.no_grad():
+                            pred = model(x).argmax(dim=1).item()
+                        if pred == label:
+                            correct += 1
+                    results_2016[model_name] = correct / len(eval_2016_labels)
+                    progress.progress((i * 2 + 1) / total_evals)
+
+                    # Evaluate on 2018
+                    correct = 0
+                    for sample, label in zip(eval_2018_data, eval_2018_labels):
+                        x = transform(sample).unsqueeze(0)
+                        with torch.no_grad():
+                            pred = model(x).argmax(dim=1).item()
+                        if pred == label:
+                            correct += 1
+                    results_2018[model_name] = correct / len(eval_2018_labels)
+                    progress.progress((i * 2 + 2) / total_evals)
+
+                progress.empty()
+
+                # Plot grouped bar chart
+                fig, ax = plt.subplots(figsize=(10, 6))
+
+                x = np.arange(len(models))
+                width = 0.35
+
+                bars1 = ax.bar(x - width/2, [results_2016[m] for m in models.keys()],
+                              width, label='Same Domain (2016→2016)', color='#22c55e', alpha=0.85)
+                bars2 = ax.bar(x + width/2, [results_2018[m] for m in models.keys()],
+                              width, label='Cross-Domain (2016→2018)', color='#dc2626', alpha=0.85)
+
+                # Add value labels
+                for bar in bars1:
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
+                           f'{bar.get_height():.1%}', ha='center', fontsize=10)
+                for bar in bars2:
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
+                           f'{bar.get_height():.1%}', ha='center', fontsize=10)
+
+                ax.set_ylabel('Accuracy')
+                ax.set_title('Cross-Dataset Generalization (Overlapping Classes, SNR ≥ 0 dB)')
+                ax.set_xticks(x)
+                ax.set_xticklabels(list(models.keys()), rotation=15, ha='right')
+                ax.legend(loc='lower right')
+                ax.set_ylim(0, 1.15)
+                ax.grid(True, alpha=0.2, axis='y')
+
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
+                # Summary table
+                st.markdown("### Cross-Dataset Performance Summary")
+                summary_data = []
+                for model_name in models.keys():
+                    acc_2016 = results_2016[model_name]
+                    acc_2018 = results_2018[model_name]
+                    drop = acc_2016 - acc_2018
+                    summary_data.append({
+                        "Model": model_name,
+                        "2016 (Same)": f"{acc_2016:.1%}",
+                        "2018 (Cross)": f"{acc_2018:.1%}",
+                        "Drop": f"{drop:+.1%}" if drop >= 0 else f"{drop:.1%}",
+                    })
+                st.table(summary_data)
+
+                # Find best model for cross-dataset
+                best_cross = max(results_2018.items(), key=lambda x: x[1])
+                least_drop = min(models.keys(), key=lambda m: results_2016[m] - results_2018[m])
+
+                st.success(f"**Best cross-dataset accuracy:** {best_cross[0]} ({best_cross[1]:.1%})")
+                st.info(f"**Smallest accuracy drop:** {least_drop} ({results_2016[least_drop] - results_2018[least_drop]:.1%} drop)")
+
+            elif "CFO" in impairment_type:
                 cfo_values = [0, 500, 1000, 2000, 3000, 5000]
                 x_label = "CFO (Hz)"
                 x_values = cfo_values

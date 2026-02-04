@@ -120,6 +120,16 @@ def load_model(checkpoint_path: Path = None) -> PFCNN:
         return None
 
 
+@st.cache_resource
+def _load_preprocessed_2018_cached() -> dict:
+    """Load preprocessed 2018 dataset with resource caching.
+
+    Uses @st.cache_resource instead of @st.cache_data because the
+    memory-mapped arrays cannot be serialized.
+    """
+    return _load_preprocessed_2018()
+
+
 @st.cache_data
 def load_dataset(data_path: Path = DATA_PATH, dataset_version: str = "2016") -> dict:
     """Load and split the dataset (cached).
@@ -134,7 +144,8 @@ def load_dataset(data_path: Path = DATA_PATH, dataset_version: str = "2016") -> 
     if dataset_version == "2018":
         # Prefer preprocessed format if available (much faster)
         if is_preprocessed_available():
-            return _load_preprocessed_2018()
+            # Use resource caching for memory-mapped arrays
+            return _load_preprocessed_2018_cached()
 
         # Fall back to HDF5 (slow but works)
         if not data_path.exists():
@@ -174,33 +185,124 @@ def load_dataset(data_path: Path = DATA_PATH, dataset_version: str = "2016") -> 
         }
 
 
+class _MappedSplitView:
+    """View into memory-mapped arrays for a specific split.
+
+    Keeps the underlying data memory-mapped. Labels and SNRs are loaded
+    eagerly (they're small), but signal data is only loaded on-demand
+    when specific samples are requested.
+    """
+
+    def __init__(self, data_mmap, labels_mmap, snrs_mmap, indices):
+        self._data_mmap = data_mmap  # Keep memory-mapped
+        self._indices = indices
+        # Labels and SNRs are small - load them for fast filtering
+        self._labels = np.array(labels_mmap[indices])
+        self._snrs = np.array(snrs_mmap[indices])
+
+    def __getitem__(self, idx):
+        """Support tuple unpacking and indexing."""
+        if isinstance(idx, int):
+            if idx == 0:
+                return self  # Return self for data - it handles __getitem__
+            elif idx == 1:
+                return self._labels
+            elif idx == 2:
+                return self._snrs
+            raise IndexError(f"Index {idx} out of range")
+        # Array indexing - load only requested samples from mmap
+        real_indices = self._indices[idx]
+        return np.array(self._data_mmap[real_indices])
+
+    def __iter__(self):
+        """Support tuple unpacking: data, labels, snrs = split."""
+        yield self  # data (this object handles array access)
+        yield self._labels
+        yield self._snrs
+
+    def __len__(self):
+        return 3
+
+    @property
+    def shape(self):
+        return (len(self._indices), 2, self._data_mmap.shape[2])
+
+
+class _MappedDataProxy:
+    """Proxy for data array that loads from mmap on access."""
+
+    def __init__(self, data_mmap, indices):
+        self._data_mmap = data_mmap
+        self._indices = indices
+        self._shape = (len(indices), 2, data_mmap.shape[2])
+
+    @property
+    def shape(self):
+        return self._shape
+
+    def __getitem__(self, idx):
+        """Load only requested samples from memory-mapped array."""
+        if isinstance(idx, (int, np.integer)):
+            # Single sample
+            real_idx = self._indices[idx]
+            return np.array(self._data_mmap[real_idx])
+        elif isinstance(idx, np.ndarray) and idx.dtype == bool:
+            # Boolean mask - convert to integer indices
+            int_indices = np.where(idx)[0]
+            real_indices = self._indices[int_indices]
+            return np.array(self._data_mmap[real_indices])
+        elif isinstance(idx, (list, np.ndarray)):
+            # Multiple samples - load only these
+            real_indices = self._indices[idx]
+            return np.array(self._data_mmap[real_indices])
+        elif isinstance(idx, slice):
+            # Slice - convert to indices
+            slice_indices = range(*idx.indices(len(self._indices)))
+            real_indices = self._indices[list(slice_indices)]
+            return np.array(self._data_mmap[real_indices])
+        raise TypeError(f"Invalid index type: {type(idx)}")
+
+    def __len__(self):
+        return len(self._indices)
+
+
 def _load_preprocessed_2018() -> dict:
     """Load preprocessed RadioML2018 dataset efficiently.
 
-    Uses memory-mapped arrays for fast loading with minimal memory footprint.
+    Uses memory-mapped arrays - signal data is only loaded when specific
+    samples are accessed, not at initial load time. Labels and SNRs are
+    loaded eagerly since they're small and needed for filtering.
     """
     import json
 
     preprocessed_dir = PREPROCESSED_2018_DIR
 
-    # Load memory-mapped arrays
+    # Load memory-mapped arrays (instant, no data loaded yet)
     data = np.load(preprocessed_dir / "data.npy", mmap_mode="r")
     labels = np.load(preprocessed_dir / "labels.npy", mmap_mode="r")
     snrs = np.load(preprocessed_dir / "snrs.npy", mmap_mode="r")
 
-    # Load metadata
+    # Load metadata (small, loads instantly)
     with open(preprocessed_dir / "metadata.json") as f:
         metadata = json.load(f)
 
-    # Load pre-computed split indices
+    # Load pre-computed split indices (small, loads instantly)
     train_idx = np.load(preprocessed_dir / "indices" / "train.npy")
     val_idx = np.load(preprocessed_dir / "indices" / "val.npy")
     test_idx = np.load(preprocessed_dir / "indices" / "test.npy")
 
+    # Create proxy objects that load data on-demand
+    def make_split(indices):
+        return (
+            _MappedDataProxy(data, indices),
+            np.array(labels[indices]),  # Small, load eagerly
+            np.array(snrs[indices]),    # Small, load eagerly
+        )
+
     return {
-        "train": (data[train_idx], labels[train_idx], snrs[train_idx]),
-        "val": (data[val_idx], labels[val_idx], snrs[val_idx]),
-        "test": (data[test_idx], labels[test_idx], snrs[test_idx]),
+        "train": make_split(train_idx),
+        "val": make_split(val_idx),
+        "test": make_split(test_idx),
         "class_names": metadata["class_names"],
         "snr_levels": metadata["snr_levels"],
         "dataset_version": "2018",
@@ -251,9 +353,30 @@ def get_samples_for_modulation(
     snr: int,
     n_samples: int = 10,
     normalize: bool = True,
+    class_names: list[str] = None,
 ) -> np.ndarray:
-    """Get samples for a specific modulation and SNR."""
-    mod_idx = MODULATION_CLASSES.index(modulation)
+    """Get samples for a specific modulation and SNR.
+
+    Args:
+        data: Signal data array or proxy
+        labels: Label array
+        snrs: SNR array
+        modulation: Modulation name to filter by
+        snr: SNR value to filter by
+        n_samples: Number of samples to return
+        normalize: Whether to normalize samples to unit power
+        class_names: List of class names (defaults to 2016 classes)
+
+    Returns:
+        Array of samples or None if no matching samples found
+    """
+    if class_names is None:
+        class_names = MODULATION_CLASSES
+
+    if modulation not in class_names:
+        return None
+
+    mod_idx = class_names.index(modulation)
     mask = (labels == mod_idx) & (snrs == snr)
     indices = np.where(mask)[0]
 
