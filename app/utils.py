@@ -47,7 +47,23 @@ MODEL_CHECKPOINTS = {
     "PF-CNN Baseline": Path("checkpoints/baseline/best_model.pt"),
     "PF-CNN + MDA-DMC": Path("checkpoints/mda_dmc/best_model.pt"),
     "CLSR-AMC": Path("checkpoints/clsr_amc/best_model.pt"),
+    "PF-CNN Baseline (2018)": Path("checkpoints/baseline_2018/best_model.pt"),
 }
+
+# Models trained on RadioML2018 (24 classes)
+MODELS_2018 = {"PF-CNN Baseline (2018)"}
+
+
+def is_model_2018(model_name: str) -> bool:
+    """Check if a model was trained on RadioML2018."""
+    return model_name in MODELS_2018
+
+
+def get_model_class_names(model_name: str) -> list[str]:
+    """Get the class names for a model based on its training dataset."""
+    if model_name in MODELS_2018:
+        return MODULATION_CLASSES_2018
+    return MODULATION_CLASSES
 
 
 def get_available_models() -> list[str]:
@@ -64,7 +80,8 @@ def load_model_by_name(model_name: str) -> Union[PFCNN, CLSRAMC, None]:
     """Load a model by name (cached).
 
     Args:
-        model_name: One of "PF-CNN Baseline", "PF-CNN + MDA-DMC", or "CLSR-AMC"
+        model_name: One of "PF-CNN Baseline", "PF-CNN + MDA-DMC", "CLSR-AMC",
+                   or "PF-CNN Baseline (2018)"
 
     Returns:
         Loaded model or None if not found
@@ -78,12 +95,18 @@ def load_model_by_name(model_name: str) -> Union[PFCNN, CLSRAMC, None]:
         st.warning(f"Model checkpoint not found at {checkpoint_path}")
         return None
 
+    # Determine number of classes based on model
+    if model_name in MODELS_2018:
+        num_classes = len(MODULATION_CLASSES_2018)
+    else:
+        num_classes = len(MODULATION_CLASSES)
+
     # Create appropriate model architecture
     if model_name == "CLSR-AMC":
-        model = create_clsr_amc(num_classes=len(MODULATION_CLASSES), variant="default")
+        model = create_clsr_amc(num_classes=num_classes, variant="default")
     else:
-        # Both baseline and MDA-DMC use PF-CNN architecture
-        model = PFCNN(num_classes=len(MODULATION_CLASSES))
+        # Baseline and MDA-DMC use PF-CNN architecture
+        model = PFCNN(num_classes=num_classes)
 
     # Load weights
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -459,7 +482,7 @@ def predict_modulation(
 ) -> tuple[str, np.ndarray]:
     """Run inference on a signal and return prediction.
 
-    Works with both PFCNN and CLSRAMC models.
+    Works with both PFCNN and CLSRAMC models, including 2018 variants.
 
     Returns:
         Tuple of (predicted_class_name, probabilities)
@@ -488,4 +511,11 @@ def predict_modulation(
         probs = torch.softmax(logits, dim=1).squeeze().cpu().numpy()
         pred_idx = logits.argmax(dim=1).item()
 
-    return MODULATION_CLASSES[pred_idx], probs
+    # Determine class names based on model's number of classes
+    num_classes = logits.shape[1]
+    if num_classes == len(MODULATION_CLASSES_2018):
+        class_names = MODULATION_CLASSES_2018
+    else:
+        class_names = MODULATION_CLASSES
+
+    return class_names[pred_idx], probs

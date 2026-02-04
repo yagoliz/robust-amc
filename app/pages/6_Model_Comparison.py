@@ -31,6 +31,8 @@ from utils import (
     get_samples_for_modulation,
     predict_modulation,
     normalize_samples,
+    is_model_2018,
+    get_model_class_names,
     DATA_PATH,
     DATA_PATH_2018,
 )
@@ -47,9 +49,10 @@ st.set_page_config(page_title="Model Comparison", page_icon="📊", layout="wide
 st.title("Model Comparison")
 st.markdown("""
 Compare the performance of different models:
-- **PF-CNN Baseline**: Standard supervised training
-- **PF-CNN + MDA-DMC**: Trained with data augmentation
-- **CLSR-AMC**: Contrastive learning with self-reconstruction
+- **PF-CNN Baseline**: Standard supervised training (RadioML2016)
+- **PF-CNN + MDA-DMC**: Trained with data augmentation (RadioML2016)
+- **CLSR-AMC**: Contrastive learning with self-reconstruction (RadioML2016)
+- **PF-CNN Baseline (2018)**: Standard supervised training (RadioML2018)
 """)
 
 # Load data
@@ -118,9 +121,21 @@ test_data, test_labels, test_snrs = dataset["test"]
 if comparison_type == "Single Signal Prediction":
     st.subheader("Single Signal Prediction Comparison")
 
+    # Check if any 2018 models are selected
+    has_2018_model = any(is_model_2018(m) for m in selected_models)
+    has_2016_model = any(not is_model_2018(m) for m in selected_models)
+
+    if has_2018_model and has_2016_model:
+        st.warning("Mixing 2016 and 2018 models - using overlapping classes only.")
+        available_mods = OVERLAPPING_CLASSES
+    elif has_2018_model:
+        available_mods = MODULATION_CLASSES_2018
+    else:
+        available_mods = MODULATION_CLASSES
+
     col1, col2 = st.columns(2)
     with col1:
-        modulation = st.selectbox("Modulation Type", MODULATION_CLASSES, index=4)
+        modulation = st.selectbox("Modulation Type", available_mods, index=min(4, len(available_mods)-1))
     with col2:
         snr = st.select_slider("SNR (dB)", options=SNR_LEVELS, value=10)
 
@@ -158,7 +173,8 @@ if comparison_type == "Single Signal Prediction":
     for i, (model_name, model) in enumerate(models.items()):
         with cols[i]:
             pred, probs = predict_modulation(model, sample)
-            conf = probs[MODULATION_CLASSES.index(pred)] if pred else 0
+            model_classes = get_model_class_names(model_name)
+            conf = probs[model_classes.index(pred)] if pred and pred in model_classes else 0
 
             st.markdown(f"**{model_name}**")
             if pred == modulation:
@@ -169,10 +185,31 @@ if comparison_type == "Single Signal Prediction":
             # Show top-3 predictions
             top3_idx = np.argsort(probs)[-3:][::-1]
             for idx in top3_idx:
-                st.write(f"  {MODULATION_CLASSES[idx]}: {probs[idx]:.1%}")
+                st.write(f"  {model_classes[idx]}: {probs[idx]:.1%}")
 
 elif comparison_type == "SNR Sweep":
     st.subheader("Accuracy vs SNR Comparison")
+
+    # Check for 2018 models - they need 2018 data
+    has_2018_model = any(is_model_2018(m) for m in selected_models)
+    has_2016_model = any(not is_model_2018(m) for m in selected_models)
+
+    if has_2018_model and has_2016_model:
+        st.warning("Cannot run SNR sweep with mixed 2016/2018 models. Please select models trained on the same dataset.")
+        st.stop()
+
+    if has_2018_model:
+        # Load 2018 dataset for 2018 models
+        dataset_2018 = load_dataset(DATA_PATH_2018, "2018")
+        if dataset_2018 is None:
+            st.error("RadioML2018 dataset required for 2018 models but not found.")
+            st.stop()
+        eval_data, eval_labels, eval_snrs = dataset_2018["test"]
+        snr_levels = dataset_2018["snr_levels"]
+        st.info("Using RadioML2018 test data for 2018 models.")
+    else:
+        eval_data, eval_labels, eval_snrs = test_data, test_labels, test_snrs
+        snr_levels = SNR_LEVELS
 
     if st.button("Run SNR Sweep (may take a moment)"):
         with st.spinner("Evaluating models across SNR levels..."):
@@ -182,18 +219,18 @@ elif comparison_type == "SNR Sweep":
             for model_idx, (model_name, model) in enumerate(models.items()):
                 accuracies = []
 
-                for snr_idx, snr in enumerate(SNR_LEVELS):
+                for snr_idx, snr in enumerate(snr_levels):
                     # Get samples for this SNR
-                    mask = test_snrs == snr
-                    snr_data = test_data[mask]
-                    snr_labels = test_labels[mask]
+                    mask = eval_snrs == snr
+                    snr_data = eval_data[mask]
+                    snr_labels_batch = eval_labels[mask]
 
                     # Evaluate
                     correct = 0
                     total = 0
                     transform = Compose([PowerNormalize(), ToTensor()])
 
-                    for sample, label in zip(snr_data[:200], snr_labels[:200]):  # Limit samples
+                    for sample, label in zip(snr_data[:200], snr_labels_batch[:200]):  # Limit samples
                         x = transform(sample).unsqueeze(0)
                         with torch.no_grad():
                             logits = model(x)
@@ -205,7 +242,7 @@ elif comparison_type == "SNR Sweep":
                     accuracies.append(correct / total if total > 0 else 0)
 
                     # Update progress
-                    progress = (model_idx * len(SNR_LEVELS) + snr_idx + 1) / (len(models) * len(SNR_LEVELS))
+                    progress = (model_idx * len(snr_levels) + snr_idx + 1) / (len(models) * len(snr_levels))
                     progress_bar.progress(progress)
 
                 results[model_name] = accuracies
@@ -217,7 +254,7 @@ elif comparison_type == "SNR Sweep":
             colors = ["#2563eb", "#dc2626", "#16a34a", "#9333ea"]
 
             for i, (model_name, accs) in enumerate(results.items()):
-                ax.plot(SNR_LEVELS, accs, "o-", label=model_name,
+                ax.plot(snr_levels, accs, "o-", label=model_name,
                         color=colors[i % len(colors)], linewidth=2, markersize=6)
 
             ax.set_xlabel("SNR (dB)")
@@ -233,8 +270,8 @@ elif comparison_type == "SNR Sweep":
             st.markdown("### Summary Statistics")
             summary_data = []
             for model_name, accs in results.items():
-                high_snr_acc = np.mean([a for a, s in zip(accs, SNR_LEVELS) if s >= 10])
-                low_snr_acc = np.mean([a for a, s in zip(accs, SNR_LEVELS) if s < 0])
+                high_snr_acc = np.mean([a for a, s in zip(accs, snr_levels) if s >= 10])
+                low_snr_acc = np.mean([a for a, s in zip(accs, snr_levels) if s < 0])
                 overall_acc = np.mean(accs)
                 summary_data.append({
                     "Model": model_name,
@@ -247,11 +284,30 @@ elif comparison_type == "SNR Sweep":
 elif comparison_type == "Impairment Robustness":
     st.subheader("Robustness Under Impairments")
 
+    # Check for 2018 models
+    has_2018_model = any(is_model_2018(m) for m in selected_models)
+    has_2016_model = any(not is_model_2018(m) for m in selected_models)
+
+    if has_2018_model and has_2016_model:
+        st.warning("Cannot run impairment tests with mixed 2016/2018 models. Please select models trained on the same dataset.")
+        st.stop()
+
+    if has_2018_model:
+        dataset_2018 = load_dataset(DATA_PATH_2018, "2018")
+        if dataset_2018 is None:
+            st.error("RadioML2018 dataset required for 2018 models but not found.")
+            st.stop()
+        eval_data, eval_labels, eval_snrs = dataset_2018["test"]
+        st.info("Using RadioML2018 test data for 2018 models.")
+    else:
+        eval_data, eval_labels, eval_snrs = test_data, test_labels, test_snrs
+
     # Check if 2018 dataset is available
     has_2018 = "RadioML2018.01a" in get_available_datasets()
 
     impairment_options = ["CFO (Carrier Frequency Offset)", "I/Q Imbalance", "Rayleigh Fading", "Combined Impairments"]
-    if has_2018:
+    # Cross-dataset only available for 2016 models
+    if has_2018 and not has_2018_model:
         impairment_options.insert(0, "Cross-Dataset (2016→2018)")
 
     impairment_type = st.selectbox(
@@ -416,8 +472,8 @@ elif comparison_type == "Impairment Robustness":
                         transform = Compose([PowerNormalize(), ToTensor()])
 
                         # Test on high SNR samples
-                        mask = test_snrs >= 10
-                        for sample, label in zip(test_data[mask][:200], test_labels[mask][:200]):
+                        mask = eval_snrs >= 10
+                        for sample, label in zip(eval_data[mask][:200], eval_labels[mask][:200]):
                             # Apply CFO
                             if cfo > 0:
                                 cfo_transform = CarrierFrequencyOffset(delta_f=cfo, sample_rate=1e6)
@@ -444,8 +500,8 @@ elif comparison_type == "Impairment Robustness":
                         total = 0
                         transform = Compose([PowerNormalize(), ToTensor()])
 
-                        mask = test_snrs >= 10
-                        for sample, label in zip(test_data[mask][:200], test_labels[mask][:200]):
+                        mask = eval_snrs >= 10
+                        for sample, label in zip(eval_data[mask][:200], eval_labels[mask][:200]):
                             if iq > 0:
                                 iq_transform = IQImbalance(amplitude_imbalance_db=iq, phase_imbalance_deg=iq)
                                 sample = iq_transform(sample)
@@ -470,8 +526,8 @@ elif comparison_type == "Impairment Robustness":
                         total = 0
                         transform = Compose([PowerNormalize(), ToTensor()])
 
-                        mask = test_snrs >= 10
-                        for i, (sample, label) in enumerate(zip(test_data[mask][:200], test_labels[mask][:200])):
+                        mask = eval_snrs >= 10
+                        for i, (sample, label) in enumerate(zip(eval_data[mask][:200], eval_labels[mask][:200])):
                             if fading:
                                 fading_channel = RayleighFading(seed=i)
                                 sample = fading_channel(sample)
@@ -501,8 +557,8 @@ elif comparison_type == "Impairment Robustness":
                         correct = 0
                         total = 0
 
-                        mask = test_snrs >= 10
-                        for sample, label in zip(test_data[mask][:200], test_labels[mask][:200]):
+                        mask = eval_snrs >= 10
+                        for sample, label in zip(eval_data[mask][:200], eval_labels[mask][:200]):
                             # Copy sample to avoid modifying original data
                             s = sample.copy()
 
@@ -590,18 +646,23 @@ with st.expander("About the Models", expanded=False):
     st.markdown("""
     ### Model Architectures
 
-    **PF-CNN Baseline**
+    **PF-CNN Baseline** (RadioML2016, 11 classes)
     - Dual-branch CNN processing amplitude and phase
     - Supervised training with CrossEntropy loss
     - Standard approach, susceptible to domain shift
 
-    **PF-CNN + MDA-DMC**
+    **PF-CNN + MDA-DMC** (RadioML2016, 11 classes)
     - Same architecture as baseline
     - Trained with Multi-Domain Augmentation (AGN, RSC, SSC)
     - More robust to variations in SNR, phase, and amplitude
 
-    **CLSR-AMC**
+    **CLSR-AMC** (RadioML2016, 11 classes)
     - Contrastive Learning with Self-Reconstruction
     - Multi-task training: contrastive + reconstruction + classification
     - Learns robust representations through self-supervision
+
+    **PF-CNN Baseline (2018)** (RadioML2018, 24 classes)
+    - Same PF-CNN architecture adapted for 24-class output
+    - Trained on larger RadioML2018 dataset with more modulations
+    - Includes more advanced modulations (higher-order QAM, APSK)
     """)

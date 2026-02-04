@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from robust_amc.data import Compose, PowerNormalize, RadioMLDataset
 from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
+from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018, SNR_LEVELS_2018
 from robust_amc.data.transforms import ToTensor
 from robust_amc.evaluation.metrics import (
     accuracy_by_snr,
@@ -23,7 +24,14 @@ from robust_amc.utils import get_device
 
 # Import utilities
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import load_dataset, load_model
+from utils import (
+    load_dataset,
+    load_model_by_name,
+    get_available_models,
+    is_model_2018,
+    get_model_class_names,
+    DATA_PATH_2018,
+)
 
 # Configure matplotlib
 plt.rcParams.update({
@@ -35,24 +43,48 @@ plt.rcParams.update({
 st.set_page_config(page_title="Model Evaluation", page_icon="🎯", layout="wide")
 
 st.title("Model Evaluation")
-st.markdown("Evaluate the PF-CNN classifier on the test set.")
+st.markdown("Evaluate classifiers on their test sets.")
 
-# Load data and model
-dataset = load_dataset()
-model = load_model()
+# Model selection
+st.sidebar.header("Model Selection")
+available_models = get_available_models()
 
-if dataset is None:
-    st.error("Dataset not found. Please download RadioML2016.10a.")
+if len(available_models) == 0:
+    st.error("No trained models found. Please train at least one model first.")
     st.stop()
 
+selected_model = st.sidebar.selectbox("Select Model", available_models)
+model = load_model_by_name(selected_model)
+
 if model is None:
-    st.error("Model not found. Please train the baseline model first.")
+    st.error(f"Failed to load model: {selected_model}")
+    st.stop()
+
+# Determine which dataset to use based on model
+use_2018 = is_model_2018(selected_model)
+class_names = get_model_class_names(selected_model)
+
+if use_2018:
+    dataset = load_dataset(DATA_PATH_2018, "2018")
+    snr_levels = SNR_LEVELS_2018
+    st.info(f"Using RadioML2018 test data (24 classes) for {selected_model}")
+else:
+    dataset = load_dataset()
+    snr_levels = SNR_LEVELS
+
+if dataset is None:
+    if use_2018:
+        st.error("RadioML2018 dataset not found. Please download or preprocess it first.")
+    else:
+        st.error("Dataset not found. Please download RadioML2016.10a.")
     st.stop()
 
 # Display model info
-st.sidebar.header("Model")
+st.sidebar.markdown("---")
+st.sidebar.header("Model Info")
 n_params = sum(p.numel() for p in model.parameters())
 st.sidebar.metric("Parameters", f"{n_params:,}")
+st.sidebar.metric("Classes", len(class_names))
 st.sidebar.metric("Device", get_device())
 
 # Get test data
