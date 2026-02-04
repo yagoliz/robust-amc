@@ -9,28 +9,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import matplotlib.pyplot as plt
-import torch
 
 from robust_amc.data import (
+    OVERLAPPING_CLASSES,
+    Compose,
+    PowerNormalize,
     get_data_loaders,
     get_data_loaders_2018,
-    PowerNormalize,
-    Compose,
-    OVERLAPPING_CLASSES,
 )
-from robust_amc.data.transforms import ToTensor
-from robust_amc.data.radioml_loader import MODULATION_CLASSES as CLASSES_2016
 from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018 as CLASSES_2018
-from robust_amc.models import create_pfcnn
-from robust_amc.training import Trainer, TrainingConfig, WandbLogger
+from robust_amc.data.radioml_loader import MODULATION_CLASSES as CLASSES_2016
+from robust_amc.data.transforms import ToTensor
 from robust_amc.evaluation import (
+    compute_confusion_matrix,
     evaluate_model,
     evaluate_snr_sweep,
-    compute_confusion_matrix,
     plot_accuracy_vs_snr,
     plot_confusion_matrix,
     plot_training_history,
 )
+from robust_amc.models import create_pfcnn
+from robust_amc.training import Trainer, TrainingConfig, WandbLogger
 
 
 def parse_args():

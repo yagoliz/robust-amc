@@ -1,14 +1,13 @@
 """RadioML2018.01a dataset loader with cross-dataset support."""
 
-import h5py
-import numpy as np
 from pathlib import Path
 from typing import Callable, Optional
 
+import h5py
+import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
-
+from torch.utils.data import DataLoader, Dataset
 
 # RadioML2018.01a has 24 modulation classes
 MODULATION_CLASSES_2018 = [
@@ -106,7 +105,7 @@ def load_radioml2018a(
     if overlapping_only:
         # Filter to only overlapping classes
         class_names = list(CLASS_NAME_MAPPING_2018_TO_2016.keys())
-        class_indices_to_keep = [MODULATION_CLASSES_2018.index(c) for c in class_names if c in MODULATION_CLASSES_2018]
+        class_indices_to_keep = [MODULATION_CLASSES_2018.index(c) for c in class_names if c in MODULATION_CLASSES_2018]  # noqa: E501
 
         # Create mask for samples with overlapping classes
         mask = np.isin(labels, class_indices_to_keep)
@@ -116,7 +115,7 @@ def load_radioml2018a(
 
         # Remap labels to consecutive indices
         old_to_new = {old: new for new, old in enumerate(sorted(class_indices_to_keep))}
-        labels = np.array([old_to_new[l] for l in labels])
+        labels = np.array([old_to_new[label] for label in labels])
 
         # Update class names to match new indices
         class_names = [MODULATION_CLASSES_2018[i] for i in sorted(class_indices_to_keep)]
