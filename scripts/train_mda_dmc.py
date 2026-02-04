@@ -25,6 +25,8 @@ import torch
 from robust_amc.data import (
     get_data_loaders,
     get_data_loaders_2018,
+    get_data_loaders_2018_fast,
+    is_preprocessed_available,
     PowerNormalize,
     Compose,
     MDADMCPipeline,
@@ -341,15 +343,27 @@ def main():
             num_workers=args.num_workers,
         )
     else:
-        loaders = get_data_loaders_2018(
-            data_path,
-            batch_size=args.batch_size,
-            train_transform=train_transform,
-            eval_transform=eval_transform,
-            num_workers=args.num_workers,
-            split_segments=True,
-            overlapping_only=args.overlapping_only,
-        )
+        # Use fast preprocessed loader if available
+        if is_preprocessed_available():
+            print("   Using preprocessed format (fast)")
+            loaders = get_data_loaders_2018_fast(
+                batch_size=args.batch_size,
+                train_transform=train_transform,
+                eval_transform=eval_transform,
+                num_workers=args.num_workers,
+                overlapping_only=args.overlapping_only,
+            )
+        else:
+            print("   Using HDF5 format (slow - run preprocess_radioml2018.py for faster loading)")
+            loaders = get_data_loaders_2018(
+                data_path,
+                batch_size=args.batch_size,
+                train_transform=train_transform,
+                eval_transform=eval_transform,
+                num_workers=args.num_workers,
+                split_segments=True,
+                overlapping_only=args.overlapping_only,
+            )
         if "class_names" in loaders:
             modulation_classes = loaders["class_names"]
 

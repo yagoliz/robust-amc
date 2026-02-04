@@ -29,6 +29,8 @@ from robust_amc.data import (
     PowerNormalize,
     get_data_loaders,
     get_data_loaders_2018,
+    get_data_loaders_2018_fast,
+    is_preprocessed_available,
 )
 from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018 as CLASSES_2018
 from robust_amc.data.radioml_loader import MODULATION_CLASSES as CLASSES_2016
@@ -43,6 +45,7 @@ from robust_amc.evaluation import (
 from robust_amc.models import create_clsr_amc
 from robust_amc.models.clsr_amc import CLSRAMCLoss
 from robust_amc.training import CLSRAMCTrainer, WandbLogger
+from robust_amc.utils import get_device
 
 
 def parse_args():
@@ -186,18 +189,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_device(device_str: str) -> torch.device:
-    """Get the device to use for training."""
-    if device_str == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        elif torch.backends.mps.is_available():
-            return torch.device("mps")
-        else:
-            return torch.device("cpu")
-    return torch.device(device_str)
-
-
 class ContrastiveAugmentation:
     """Generate two augmented views for contrastive learning."""
 
@@ -294,15 +285,27 @@ def main():
             num_workers=args.num_workers,
         )
     else:
-        base_loaders = get_data_loaders_2018(
-            data_path,
-            batch_size=args.batch_size,
-            train_transform=None,
-            eval_transform=None,
-            num_workers=args.num_workers,
-            split_segments=True,
-            overlapping_only=args.overlapping_only,
-        )
+        # Use fast preprocessed loader if available
+        if is_preprocessed_available():
+            print("   Using preprocessed format (fast)")
+            base_loaders = get_data_loaders_2018_fast(
+                batch_size=args.batch_size,
+                train_transform=None,
+                eval_transform=None,
+                num_workers=args.num_workers,
+                overlapping_only=args.overlapping_only,
+            )
+        else:
+            print("   Using HDF5 format (slow - run preprocess_radioml2018.py for faster loading)")
+            base_loaders = get_data_loaders_2018(
+                data_path,
+                batch_size=args.batch_size,
+                train_transform=None,
+                eval_transform=None,
+                num_workers=args.num_workers,
+                split_segments=True,
+                overlapping_only=args.overlapping_only,
+            )
         if "class_names" in base_loaders:
             modulation_classes = base_loaders["class_names"]
 

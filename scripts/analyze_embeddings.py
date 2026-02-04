@@ -18,16 +18,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from scipy.spatial.distance import cdist
 from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score
-from scipy.spatial.distance import cdist
 
-from robust_amc.data import get_data_loaders, PowerNormalize, Compose
-from robust_amc.data.transforms import ToTensor
+from robust_amc.data import Compose, PowerNormalize, get_data_loaders
 from robust_amc.data.radioml_loader import MODULATION_CLASSES
-from robust_amc.models import create_pfcnn, create_clsr_amc
+from robust_amc.data.transforms import ToTensor
 from robust_amc.evaluation import get_embeddings
+from robust_amc.models import create_clsr_amc, create_pfcnn
 from robust_amc.training import WandbLogger
+from robust_amc.utils import get_device
 
 
 def compute_cluster_metrics(embeddings: np.ndarray, labels: np.ndarray) -> dict:
@@ -252,18 +253,6 @@ def parse_args():
         help="W&B project name",
     )
     return parser.parse_args()
-
-
-def get_device(device_str: str) -> str:
-    """Get the device to use."""
-    if device_str == "auto":
-        if torch.cuda.is_available():
-            return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"
-        else:
-            return "cpu"
-    return device_str
 
 
 def main():

@@ -1,5 +1,6 @@
 """Tests for data loading utilities."""
 
+import json
 import numpy as np
 import pytest
 import torch
@@ -9,6 +10,12 @@ from robust_amc.data.radioml_loader import (
     MODULATION_CLASSES,
     SNR_LEVELS,
     stratified_split,
+)
+from robust_amc.data.radioml2018_loader import (
+    RadioML2018MappedDataset,
+    MODULATION_CLASSES_2018,
+    SNR_LEVELS_2018,
+    is_preprocessed_available,
 )
 from robust_amc.data.transforms import PowerNormalize, ToTensor, Compose
 
@@ -168,3 +175,114 @@ class TestModulationClasses:
         assert SNR_LEVELS[0] == -20
         assert SNR_LEVELS[-1] == 18
         assert len(SNR_LEVELS) == 20
+
+
+class TestRadioML2018MappedDataset:
+    """Tests for memory-mapped RadioML2018 dataset."""
+
+    @pytest.fixture
+    def mock_preprocessed_dir(self, tmp_path):
+        """Create mock preprocessed data for testing."""
+        n_samples = 1000
+        n_classes = len(MODULATION_CLASSES_2018)
+        seq_len = 128
+
+        # Create mock data files
+        data = np.random.randn(n_samples, 2, seq_len).astype(np.float32)
+        np.save(tmp_path / "data.npy", data)
+
+        labels = np.random.randint(0, n_classes, n_samples).astype(np.int64)
+        np.save(tmp_path / "labels.npy", labels)
+
+        snrs = np.random.choice(SNR_LEVELS_2018, n_samples).astype(np.float32)
+        np.save(tmp_path / "snrs.npy", snrs)
+
+        # Create indices directory and split indices
+        (tmp_path / "indices").mkdir()
+        indices = np.arange(n_samples)
+        np.random.shuffle(indices)
+        np.save(tmp_path / "indices" / "train.npy", indices[:600])
+        np.save(tmp_path / "indices" / "val.npy", indices[600:800])
+        np.save(tmp_path / "indices" / "test.npy", indices[800:])
+
+        # Create metadata
+        metadata = {
+            "class_names": MODULATION_CLASSES_2018,
+            "snr_levels": SNR_LEVELS_2018,
+            "num_samples": n_samples,
+            "sequence_length": seq_len,
+        }
+        with open(tmp_path / "metadata.json", "w") as f:
+            json.dump(metadata, f)
+
+        return tmp_path
+
+    def test_dataset_loads(self, mock_preprocessed_dir):
+        """Test that dataset loads without error."""
+        dataset = RadioML2018MappedDataset(mock_preprocessed_dir, split="train")
+        assert dataset is not None
+
+    def test_dataset_length(self, mock_preprocessed_dir):
+        """Test dataset length matches expected split size."""
+        train_dataset = RadioML2018MappedDataset(mock_preprocessed_dir, split="train")
+        val_dataset = RadioML2018MappedDataset(mock_preprocessed_dir, split="val")
+        test_dataset = RadioML2018MappedDataset(mock_preprocessed_dir, split="test")
+
+        assert len(train_dataset) == 600
+        assert len(val_dataset) == 200
+        assert len(test_dataset) == 200
+
+    def test_getitem_returns_correct_types(self, mock_preprocessed_dir):
+        """Test __getitem__ returns correct types."""
+        dataset = RadioML2018MappedDataset(mock_preprocessed_dir, split="train")
+        x, y, snr = dataset[0]
+
+        assert isinstance(x, torch.Tensor)
+        assert x.shape == (2, 128)
+        assert x.dtype == torch.float32
+        assert isinstance(y, int)
+        assert isinstance(snr, float)
+
+    def test_dataset_with_transform(self, mock_preprocessed_dir):
+        """Test that transforms are applied correctly."""
+        transform = Compose([PowerNormalize(), ToTensor()])
+        dataset = RadioML2018MappedDataset(
+            mock_preprocessed_dir, split="train", transform=transform
+        )
+
+        x, y, snr = dataset[0]
+        assert isinstance(x, torch.Tensor)
+
+        # Check power normalization worked
+        power = torch.mean(x[0] ** 2 + x[1] ** 2)
+        assert abs(power - 1.0) < 0.01
+
+    def test_num_classes(self, mock_preprocessed_dir):
+        """Test num_classes property."""
+        dataset = RadioML2018MappedDataset(mock_preprocessed_dir, split="train")
+        assert dataset.num_classes == len(MODULATION_CLASSES_2018)
+
+    def test_class_names(self, mock_preprocessed_dir):
+        """Test class_names are loaded correctly."""
+        dataset = RadioML2018MappedDataset(mock_preprocessed_dir, split="train")
+        assert dataset.class_names == MODULATION_CLASSES_2018
+
+    def test_no_split_loads_all(self, mock_preprocessed_dir):
+        """Test that split=None loads all data."""
+        dataset = RadioML2018MappedDataset(mock_preprocessed_dir, split=None)
+        assert len(dataset) == 1000
+
+    def test_missing_preprocessed_raises(self, tmp_path):
+        """Test that missing preprocessed dir raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            RadioML2018MappedDataset(tmp_path / "nonexistent")
+
+    def test_is_preprocessed_available(self, mock_preprocessed_dir):
+        """Test is_preprocessed_available function."""
+        # Should return True for valid preprocessed dir
+        assert is_preprocessed_available(mock_preprocessed_dir)
+
+        # Should return False for empty dir
+        empty_dir = mock_preprocessed_dir.parent / "empty"
+        empty_dir.mkdir()
+        assert not is_preprocessed_available(empty_dir)

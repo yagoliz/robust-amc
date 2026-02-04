@@ -1,5 +1,6 @@
 """RadioML2018.01a dataset loader with cross-dataset support."""
 
+import json
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -8,6 +9,9 @@ import numpy as np
 import torch
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
+
+# Default path for preprocessed data
+PREPROCESSED_2018_DIR = Path("data/radioml2018_preprocessed")
 
 # RadioML2018.01a has 24 modulation classes
 MODULATION_CLASSES_2018 = [
@@ -376,3 +380,222 @@ def get_data_loaders_2018(
     }
 
     return loaders
+
+
+class RadioML2018MappedDataset(Dataset):
+    """Memory-mapped PyTorch Dataset for RadioML2018.01a.
+
+    Uses preprocessed .npy files for O(1) sample access without
+    loading the entire dataset into memory. This is the recommended
+    dataset class for training and evaluation.
+
+    Args:
+        preprocessed_dir: Path to directory with preprocessed .npy files
+        split: Which split to use ("train", "val", "test", or None for all)
+        transform: Optional transform to apply to samples
+        overlapping_only: If True, only use classes that overlap with 2016
+    """
+
+    def __init__(
+        self,
+        preprocessed_dir: str | Path = PREPROCESSED_2018_DIR,
+        split: Optional[str] = None,
+        transform: Optional[Callable] = None,
+        overlapping_only: bool = False,
+    ):
+        self.preprocessed_dir = Path(preprocessed_dir)
+
+        if not self.preprocessed_dir.exists():
+            raise FileNotFoundError(
+                f"Preprocessed data not found at {self.preprocessed_dir}. "
+                "Run: uv run python scripts/preprocess_radioml2018.py"
+            )
+
+        # Load memory-mapped arrays (read-only, loads on-demand)
+        self.data = np.load(
+            self.preprocessed_dir / "data.npy",
+            mmap_mode="r",
+        )
+        self.labels = np.load(
+            self.preprocessed_dir / "labels.npy",
+            mmap_mode="r",
+        )
+        self.snrs = np.load(
+            self.preprocessed_dir / "snrs.npy",
+            mmap_mode="r",
+        )
+
+        # Load metadata
+        with open(self.preprocessed_dir / "metadata.json") as f:
+            self.metadata = json.load(f)
+
+        self.class_names = self.metadata["class_names"]
+
+        # Load split indices if specified
+        if split is not None:
+            indices_path = self.preprocessed_dir / "indices" / f"{split}.npy"
+            if not indices_path.exists():
+                raise FileNotFoundError(f"Split indices not found: {indices_path}")
+            self.indices = np.load(indices_path)
+        else:
+            self.indices = np.arange(len(self.labels))
+
+        # Filter to overlapping classes if requested
+        self._overlapping_only = overlapping_only
+        if overlapping_only:
+            self._setup_overlapping_filter()
+
+        self.transform = transform
+
+    def _setup_overlapping_filter(self) -> None:
+        """Setup filtering for overlapping classes only."""
+        # Get indices of overlapping classes in the 2018 dataset
+        overlapping_class_names = list(CLASS_NAME_MAPPING_2018_TO_2016.keys())
+        overlapping_indices = [
+            self.class_names.index(c)
+            for c in overlapping_class_names
+            if c in self.class_names
+        ]
+
+        # Filter indices to only include overlapping classes
+        labels_arr = np.array(self.labels)  # Need regular array for masking
+        mask = np.isin(labels_arr[self.indices], overlapping_indices)
+        self.indices = self.indices[mask]
+
+        # Create label remapping
+        self._label_map = {old: new for new, old in enumerate(sorted(overlapping_indices))}
+        self._filtered_class_names = [
+            self.class_names[i] for i in sorted(overlapping_indices)
+        ]
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int, float]:
+        real_idx = self.indices[idx]
+
+        # Memory-mapped read - only loads this sample from disk
+        x = np.array(self.data[real_idx])  # Copy to allow transforms
+        y = int(self.labels[real_idx])
+        snr = float(self.snrs[real_idx])
+
+        # Remap label if using overlapping classes only
+        if self._overlapping_only:
+            y = self._label_map[y]
+
+        if self.transform is not None:
+            x = self.transform(x)
+
+        if not isinstance(x, torch.Tensor):
+            x = torch.from_numpy(x)
+
+        return x, y, snr
+
+    @property
+    def num_classes(self) -> int:
+        if self._overlapping_only:
+            return len(self._filtered_class_names)
+        return len(self.class_names)
+
+    def get_class_names(self) -> list[str]:
+        """Get class names, accounting for overlapping filter."""
+        if self._overlapping_only:
+            return self._filtered_class_names
+        return self.class_names
+
+
+def get_data_loaders_2018_fast(
+    preprocessed_dir: str | Path = PREPROCESSED_2018_DIR,
+    batch_size: int = 256,
+    train_transform: Optional[Callable] = None,
+    eval_transform: Optional[Callable] = None,
+    num_workers: int = 4,
+    overlapping_only: bool = False,
+) -> dict[str, DataLoader]:
+    """Create DataLoaders from preprocessed RadioML2018 data.
+
+    This is the recommended method for training - uses memory-mapped
+    arrays for fast loading with minimal memory footprint.
+
+    Args:
+        preprocessed_dir: Path to directory with preprocessed .npy files
+        batch_size: Batch size for all loaders
+        train_transform: Transform for training data
+        eval_transform: Transform for validation and test data
+        num_workers: Number of data loading workers
+        overlapping_only: Whether to only use classes that overlap with 2016
+
+    Returns:
+        Dictionary with 'train', 'val', 'test' DataLoaders and 'class_names'
+    """
+    preprocessed_dir = Path(preprocessed_dir)
+
+    # Create datasets for each split
+    train_dataset = RadioML2018MappedDataset(
+        preprocessed_dir,
+        split="train",
+        transform=train_transform,
+        overlapping_only=overlapping_only,
+    )
+    val_dataset = RadioML2018MappedDataset(
+        preprocessed_dir,
+        split="val",
+        transform=eval_transform,
+        overlapping_only=overlapping_only,
+    )
+    test_dataset = RadioML2018MappedDataset(
+        preprocessed_dir,
+        split="test",
+        transform=eval_transform,
+        overlapping_only=overlapping_only,
+    )
+
+    class_names = train_dataset.get_class_names()
+
+    # Create data loaders with persistent workers for faster epochs
+    use_persistent = num_workers > 0
+
+    loaders = {
+        "train": DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=True,
+            drop_last=True,
+            persistent_workers=use_persistent,
+        ),
+        "val": DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+            persistent_workers=use_persistent,
+        ),
+        "test": DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+            persistent_workers=use_persistent,
+        ),
+        "class_names": class_names,
+    }
+
+    return loaders
+
+
+def is_preprocessed_available(preprocessed_dir: Path = PREPROCESSED_2018_DIR) -> bool:
+    """Check if preprocessed RadioML2018 data is available."""
+    required_files = [
+        "data.npy",
+        "labels.npy",
+        "snrs.npy",
+        "metadata.json",
+        "indices/train.npy",
+        "indices/val.npy",
+        "indices/test.npy",
+    ]
+    return all((preprocessed_dir / f).exists() for f in required_files)

@@ -15,6 +15,8 @@ data/*.tar.bz2
 data/*.zip
 data/*.h5
 data/*.hdf5
+data/*npy
+data/radioml2018_preprocessed
 
 # Model checkpoints
 checkpoints/*.pt

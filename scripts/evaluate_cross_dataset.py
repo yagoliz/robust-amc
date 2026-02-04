@@ -24,18 +24,19 @@ import numpy as np
 import torch
 
 from robust_amc.data import (
+    CLASS_NAME_MAPPING_2018_TO_2016,
+    OVERLAPPING_CLASSES,
+    Compose,
+    PowerNormalize,
     load_radioml2016a,
     load_radioml2018a,
-    PowerNormalize,
-    Compose,
-    OVERLAPPING_CLASSES,
-    CLASS_NAME_MAPPING_2018_TO_2016,
 )
-from robust_amc.data.transforms import ToTensor
-from robust_amc.data.radioml_loader import MODULATION_CLASSES as CLASSES_2016
 from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018 as CLASSES_2018
-from robust_amc.models import create_pfcnn, create_clsr_amc
+from robust_amc.data.radioml_loader import MODULATION_CLASSES as CLASSES_2016
+from robust_amc.data.transforms import ToTensor
 from robust_amc.evaluation import accuracy_by_snr
+from robust_amc.models import create_clsr_amc, create_pfcnn
+from robust_amc.utils import get_device
 
 
 def parse_args():
@@ -91,17 +92,6 @@ def parse_args():
         help="Maximum samples to evaluate (for faster testing)",
     )
     return parser.parse_args()
-
-
-def get_device(device_str: str) -> str:
-    if device_str == "auto":
-        if torch.cuda.is_available():
-            return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"
-        else:
-            return "cpu"
-    return device_str
 
 
 def load_eval_data(

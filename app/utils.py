@@ -13,26 +13,27 @@ import torch.nn as nn
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from robust_amc.data import (
+    OVERLAPPING_CLASSES,
+    PREPROCESSED_2018_DIR,
+    Compose,
+    PowerNormalize,
+    is_preprocessed_available,
     load_radioml2016a,
     load_radioml2018a,
     stratified_split,
     stratified_split_2018,
-    PowerNormalize,
-    Compose,
-    OVERLAPPING_CLASSES,
 )
-from robust_amc.data.transforms import ToTensor
-from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
-from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018, SNR_LEVELS_2018
 from robust_amc.data.channels import RayleighFading, RicianFading
 from robust_amc.data.impairments import (
     CarrierFrequencyOffset,
-    IQImbalance,
     DCOffset,
+    IQImbalance,
     PhaseNoise,
 )
-from robust_amc.models import PFCNN, CLSRAMC, create_clsr_amc
-
+from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018, SNR_LEVELS_2018
+from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
+from robust_amc.data.transforms import ToTensor
+from robust_amc.models import CLSRAMC, PFCNN, create_clsr_amc
 
 # Default paths
 DATA_PATH_2016 = Path("data/RML2016.10a_dict.pkl")
@@ -130,10 +131,19 @@ def load_dataset(data_path: Path = DATA_PATH, dataset_version: str = "2016") -> 
     Returns:
         Dictionary with train/val/test splits and metadata
     """
-    if not data_path.exists():
-        return None
-
     if dataset_version == "2018":
+        # Prefer preprocessed format if available (much faster)
+        if is_preprocessed_available():
+            return _load_preprocessed_2018()
+
+        # Fall back to HDF5 (slow but works)
+        if not data_path.exists():
+            return None
+
+        st.warning(
+            "Using raw HDF5 format (slow). "
+            "Run `uv run python scripts/preprocess_radioml2018.py` for faster loading."
+        )
         data, labels, snrs, class_names = load_radioml2018a(
             data_path,
             split_segments=True,
@@ -149,6 +159,9 @@ def load_dataset(data_path: Path = DATA_PATH, dataset_version: str = "2016") -> 
             "dataset_version": "2018",
         }
     else:
+        if not data_path.exists():
+            return None
+
         data, labels, snrs = load_radioml2016a(data_path)
         splits = stratified_split(data, labels, snrs)
         return {
@@ -161,12 +174,46 @@ def load_dataset(data_path: Path = DATA_PATH, dataset_version: str = "2016") -> 
         }
 
 
+def _load_preprocessed_2018() -> dict:
+    """Load preprocessed RadioML2018 dataset efficiently.
+
+    Uses memory-mapped arrays for fast loading with minimal memory footprint.
+    """
+    import json
+
+    preprocessed_dir = PREPROCESSED_2018_DIR
+
+    # Load memory-mapped arrays
+    data = np.load(preprocessed_dir / "data.npy", mmap_mode="r")
+    labels = np.load(preprocessed_dir / "labels.npy", mmap_mode="r")
+    snrs = np.load(preprocessed_dir / "snrs.npy", mmap_mode="r")
+
+    # Load metadata
+    with open(preprocessed_dir / "metadata.json") as f:
+        metadata = json.load(f)
+
+    # Load pre-computed split indices
+    train_idx = np.load(preprocessed_dir / "indices" / "train.npy")
+    val_idx = np.load(preprocessed_dir / "indices" / "val.npy")
+    test_idx = np.load(preprocessed_dir / "indices" / "test.npy")
+
+    return {
+        "train": (data[train_idx], labels[train_idx], snrs[train_idx]),
+        "val": (data[val_idx], labels[val_idx], snrs[val_idx]),
+        "test": (data[test_idx], labels[test_idx], snrs[test_idx]),
+        "class_names": metadata["class_names"],
+        "snr_levels": metadata["snr_levels"],
+        "dataset_version": "2018",
+    }
+
+
 def get_available_datasets() -> list[str]:
     """Get list of available datasets."""
     available = []
     if DATA_PATH_2016.exists():
         available.append("RadioML2016.10a")
-    if DATA_PATH_2018.exists():
+    # 2018 is available if either preprocessed or raw HDF5 exists
+    if is_preprocessed_available() or DATA_PATH_2018.exists():
         available.append("RadioML2018.01a")
     return available
 
@@ -319,12 +366,3 @@ def predict_modulation(
         pred_idx = logits.argmax(dim=1).item()
 
     return MODULATION_CLASSES[pred_idx], probs
-
-
-def get_device() -> str:
-    """Get the best available device."""
-    if torch.cuda.is_available():
-        return "cuda"
-    elif torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
