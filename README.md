@@ -28,9 +28,6 @@ Download RadioML2016.10a manually from [DeepSig](https://www.deepsig.ai/datasets
 ```bash
 # Run tests
 uv run pytest
-
-# Verify data loading and generate constellation plots
-uv run python scripts/verify_data.py
 ```
 
 ## Project Structure
@@ -40,9 +37,11 @@ uv run python scripts/verify_data.py
 │   ├── data/                # Data loading, transforms, augmentations
 │   ├── models/              # Neural network architectures
 │   ├── losses/              # Loss functions
-│   ├── training/            # Training loops
-│   └── evaluation/          # Metrics and visualization
-├── scripts/                 # Executable scripts
+│   ├── training/            # Training loops and diagnostics
+│   ├── evaluation/          # Metrics, visualization, and analysis
+│   └── utils/               # Utilities (seeding, device selection)
+├── scripts/                 # Training scripts
+├── notebooks/               # Analysis notebooks
 ├── app/                     # Streamlit demo application
 ├── checkpoints/             # Saved model weights
 ├── results/                 # Evaluation outputs
@@ -63,6 +62,8 @@ uv run python scripts/train_mda_dmc.py
 # Train CLSR-AMC
 uv run python scripts/train_clsr_amc.py
 ```
+
+Use `--seed 42` for reproducible training runs.
 
 ### Interactive Demo
 
@@ -85,16 +86,27 @@ uv run black src tests
 uv run ruff check src tests
 ```
 
-## Visualizations
+## Analysis Notebooks
+
+After training, explore results using Jupyter notebooks:
+
+```bash
+uv run jupyter lab notebooks/
+```
+
+Available notebooks:
+- `01_data_exploration.ipynb` - Dataset inspection and visualization
+- `02_evaluate_impairments.ipynb` - Robustness evaluation under hardware impairments
+- `03_compare_experiments.ipynb` - Training run comparison and diagnostics
+- `04_analyze_embeddings.ipynb` - t-SNE visualization and cluster analysis
+- `05_cross_dataset_evaluation.ipynb` - Cross-dataset domain shift analysis
+
+## W&B Logging
+
+Enable Weights & Biases logging during training:
 
 ```bash
 uv run python scripts/train_baseline.py --wandb --epochs 50
 uv run python scripts/train_mda_dmc.py --wandb --epochs 50
 uv run python scripts/train_clsr_amc.py --wandb --epochs 50
-
-# Compare training runs (after training)
-uv run python scripts/compare_experiments.py
-
-# Analyze embeddings (after training)
-uv run python scripts/analyze_embeddings.py --model all
 ```
