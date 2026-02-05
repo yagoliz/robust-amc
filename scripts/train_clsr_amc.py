@@ -45,7 +45,7 @@ from robust_amc.evaluation import (
 from robust_amc.models import create_clsr_amc
 from robust_amc.models.clsr_amc import CLSRAMCLoss
 from robust_amc.training import CLSRAMCTrainer, WandbLogger
-from robust_amc.utils import get_device
+from robust_amc.utils import get_device, set_seed
 
 
 def parse_args():
@@ -186,6 +186,12 @@ def parse_args():
         default=None,
         help="W&B run name (default: auto-generated)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility (default: None = non-deterministic)",
+    )
     return parser.parse_args()
 
 
@@ -243,9 +249,15 @@ def main():
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
+    # Set random seed for reproducibility
+    if args.seed is not None:
+        set_seed(args.seed)
+
     print("=" * 60)
     print(f"Training CLSR-AMC Model on RadioML{args.dataset}")
     print("=" * 60)
+    if args.seed is not None:
+        print(f"   Random seed: {args.seed}")
 
     if args.dataset == "2016":
         data_path = args.data_path or args.data_path_2016

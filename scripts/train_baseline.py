@@ -32,6 +32,7 @@ from robust_amc.evaluation import (
 )
 from robust_amc.models import create_pfcnn
 from robust_amc.training import Trainer, TrainingConfig, WandbLogger
+from robust_amc.utils import set_seed
 
 
 def parse_args():
@@ -127,6 +128,12 @@ def parse_args():
         default=None,
         help="W&B run name (default: auto-generated)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducibility (default: None = non-deterministic)",
+    )
     return parser.parse_args()
 
 
@@ -141,9 +148,15 @@ def main():
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
+    # Set random seed for reproducibility
+    if args.seed is not None:
+        set_seed(args.seed)
+
     print("=" * 60)
     print(f"Training Baseline PF-CNN on RadioML{args.dataset}")
     print("=" * 60)
+    if args.seed is not None:
+        print(f"   Random seed: {args.seed}")
 
     # Determine data path and load data
     if args.dataset == "2016":

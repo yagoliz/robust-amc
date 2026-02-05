@@ -25,6 +25,7 @@ class TrainingConfig:
     lr_scheduler_factor: float = 0.5
     checkpoint_dir: Optional[Path] = None
     device: str = "auto"
+    seed: Optional[int] = None
 
     def __post_init__(self):
         if self.device == "auto":
