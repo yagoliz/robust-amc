@@ -42,11 +42,11 @@ DATA_PATH_2018 = Path("data/GOLD_XYZ_OSC.0001_1024.hdf5")
 # For backwards compatibility
 DATA_PATH = DATA_PATH_2016
 
-# Model checkpoint paths
+# Model checkpoint paths (match training script defaults)
 MODEL_CHECKPOINTS = {
-    "PF-CNN Baseline": Path("checkpoints/baseline/best_model.pt"),
-    "PF-CNN + MDA-DMC": Path("checkpoints/mda_dmc/best_model.pt"),
-    "CLSR-AMC": Path("checkpoints/clsr_amc/best_model.pt"),
+    "PF-CNN Baseline": Path("checkpoints/baseline_2016/best_model.pt"),
+    "PF-CNN + MDA-DMC": Path("checkpoints/mda_dmc_2016/best_model.pt"),
+    "CLSR-AMC": Path("checkpoints/clsr_amc_2016/best_model.pt"),
     "PF-CNN Baseline (2018)": Path("checkpoints/baseline_2018/best_model.pt"),
 }
 

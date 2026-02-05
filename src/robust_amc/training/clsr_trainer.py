@@ -287,5 +287,26 @@ class CLSRAMCTrainer:
 
     def load_checkpoint(self, path: Path) -> None:
         """Load model checkpoint."""
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint["model_state_dict"])
+
+        # Restore optimizer and scheduler if present
+        if "optimizer_state_dict" in checkpoint:
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if "scheduler_state_dict" in checkpoint:
+            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+
+        # Restore history
+        if "history" in checkpoint:
+            h = checkpoint["history"]
+            self.history.train_loss = h.get("train_loss", [])
+            self.history.train_contrastive = h.get("train_contrastive", [])
+            self.history.train_reconstruction = h.get("train_reconstruction", [])
+            self.history.train_classification = h.get("train_classification", [])
+            self.history.train_acc = h.get("train_acc", [])
+            self.history.val_loss = h.get("val_loss", [])
+            self.history.val_acc = h.get("val_acc", [])
+            self.history.best_val_acc = h.get("best_val_acc", 0.0)
+            self.history.best_epoch = h.get("best_epoch", 0)
+            self.history.learning_rates = h.get("learning_rates", [])
+            self.history.gradient_norms = h.get("gradient_norms", [])

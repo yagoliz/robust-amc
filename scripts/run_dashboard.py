@@ -4,7 +4,7 @@
 Usage:
     python scripts/run_dashboard.py
     # or
-    uv run streamlit run app/main.py
+    uv run streamlit run app/Introduction.py
 """
 
 import subprocess

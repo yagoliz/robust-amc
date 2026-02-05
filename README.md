@@ -21,11 +21,7 @@ uv sync
 
 ### Download Dataset
 
-```bash
-uv run python scripts/download_data.py
-```
-
-This downloads RadioML2016.10a (~500MB) from DeepSig's public repository.
+Download RadioML2016.10a manually from [DeepSig](https://www.deepsig.ai/datasets/) and place it at `data/RML2016.10a_dict.pkl`.
 
 ### Verify Installation
 
@@ -48,7 +44,6 @@ uv run python scripts/verify_data.py
 │   └── evaluation/          # Metrics and visualization
 ├── scripts/                 # Executable scripts
 ├── app/                     # Streamlit demo application
-├── configs/                 # Configuration files
 ├── checkpoints/             # Saved model weights
 ├── results/                 # Evaluation outputs
 └── tests/                   # Unit tests
@@ -63,16 +58,18 @@ uv run python scripts/verify_data.py
 uv run python scripts/train_baseline.py
 
 # Train with MDA-DMC augmentation
-uv run python scripts/train_mda.py
+uv run python scripts/train_mda_dmc.py
 
 # Train CLSR-AMC
-uv run python scripts/train_clsr.py
+uv run python scripts/train_clsr_amc.py
 ```
 
 ### Interactive Demo
 
 ```bash
-uv run streamlit run app/app.py
+uv run python scripts/run_dashboard.py
+# or directly:
+uv run streamlit run app/Introduction.py
 ```
 
 ## Development
