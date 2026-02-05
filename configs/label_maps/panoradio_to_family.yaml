@@ -1,0 +1,46 @@
+# Panoradio HF mode to family mapping
+# Maps HF transmission protocols to shared family labels for cross-dataset evaluation
+#
+# Dataset: https://panoradio-sdr.de/radio-signal-classification-dataset/
+# 18 HF modes total, 172,800 samples
+#
+# Families: PSK, FSK, AM, SSB, OTHER
+# Labels are case-insensitive
+# Wildcard patterns (*) are supported
+
+PSK:
+  - psk31
+  - psk63
+  - psk125
+  - psk250
+  - qpsk31
+  - qpsk63
+  - qpsk125
+  - qpsk250
+
+FSK:
+  # RTTY variants (frequency-shift keying)
+  - rtty45
+  - rtty50
+  - rtty75
+  - rtty100
+  # Olivia modes (MFSK)
+  - olivia*
+  # DominoEx modes (MFSK)
+  - dominoex*
+
+AM:
+  - am
+
+SSB:
+  - usb
+  - lsb
+
+OTHER:
+  # Modes that don't fit cleanly into families
+  - cw      # Morse code (OOK)
+  - mt63    # Multi-tone
+  - navtex  # Narrow-band direct printing
+  - sitor*  # SITOR/NAVTEX
+  - hf_fax  # HF radiofax
+  - fax*

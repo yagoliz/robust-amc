@@ -1,0 +1,50 @@
+# TorchSig modulation to family mapping
+# Maps baseband modulation types to shared family labels for cross-dataset evaluation
+#
+# Families: PSK, FSK, AM, SSB, QAM
+# Labels are case-insensitive
+# Wildcard patterns (*) are supported
+
+PSK:
+  - bpsk
+  - qpsk
+  - 8psk
+  - 16psk
+  - 32psk
+  - 64psk
+  - oqpsk
+
+FSK:
+  - 2fsk
+  - 4fsk
+  - 8fsk
+  - 16fsk
+  - gfsk
+  - gmsk
+  - msk
+
+AM:
+  - am-dsb
+  - am-dsb-sc
+  - ook
+  - 4ask
+  - 8ask
+  - 16ask
+
+SSB:
+  - am-usb
+  - am-lsb
+
+QAM:
+  - 16qam
+  - 32qam
+  - 32qam_cross
+  - 64qam
+  - 128qam_cross
+  - 256qam
+  - 512qam_cross
+  - 1024qam
+  - 16apsk
+  - 32apsk
+  - 64apsk
+  - 128apsk

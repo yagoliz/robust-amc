@@ -30,9 +30,12 @@ from .sweeps import (
     plot_impairment_sweep_results,
 )
 from .cross_dataset import (
-    get_class_mapping,
-    load_overlapping_data,
-    evaluate_cross_dataset,
+    evaluate_family_model,
+    evaluate_cross_domain,
+    evaluate_ood_gap,
+    compute_family_confusion_matrix,
+    accuracy_by_family,
+    full_evaluation_report,
 )
 
 __all__ = [
@@ -61,8 +64,11 @@ __all__ = [
     "sweep_dc_offset",
     "sweep_fading",
     "plot_impairment_sweep_results",
-    # Cross-dataset
-    "get_class_mapping",
-    "load_overlapping_data",
-    "evaluate_cross_dataset",
+    # Cross-domain evaluation
+    "evaluate_family_model",
+    "evaluate_cross_domain",
+    "evaluate_ood_gap",
+    "compute_family_confusion_matrix",
+    "accuracy_by_family",
+    "full_evaluation_report",
 ]

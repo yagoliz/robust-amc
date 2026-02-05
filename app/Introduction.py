@@ -1,7 +1,7 @@
 """Robust AMC Demonstrator - Streamlit Dashboard.
 
 This is the main entry point for the interactive dashboard.
-Run with: streamlit run app/main.py
+Run with: streamlit run app/Introduction.py
 """
 
 import streamlit as st
@@ -38,12 +38,19 @@ Navigate using the sidebar to explore:
 
 ---
 
-### Dataset
+### Datasets
 
-The demonstrator uses **RadioML2016.10a**:
-- 11 modulation classes (BPSK, QPSK, 8PSK, QAM16, QAM64, etc.)
-- 220,000 samples at SNRs from -20 to +18 dB
-- I/Q format: 128 time samples per signal
+The demonstrator uses two datasets:
+
+**TorchSig (Synthetic)**
+- 5 modulation families: PSK, FSK, AM, SSB, QAM
+- Configurable SNR and impairment levels
+- On-the-fly generation with realistic impairments
+
+**Panoradio (Real HF)**
+- Real over-the-air HF radio captures
+- 18 transmission modes mapped to 5 families
+- Watterson fading, frequency offset, SNR -10 to +25 dB
 
 ### Model
 
@@ -58,5 +65,5 @@ with st.sidebar:
     Built with:
     - PyTorch
     - Streamlit
-    - RadioML2016.10a
+    - TorchSig + Panoradio
     """)

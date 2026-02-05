@@ -1,0 +1,32 @@
+# TorchSig training configuration
+# Synthetic signals with mild impairments for training
+
+dataset_type: torchsig
+data_path: data/torchsig_train
+label_map_path: configs/label_maps/torchsig_to_family.yaml
+
+batch_size: 256
+num_workers: 4
+seed: 42
+
+extra_config:
+  # Signal processing
+  crop_length: 128
+
+  # Split ratios
+  train_ratio: 0.6
+  val_ratio: 0.2
+  test_ratio: 0.2
+
+  # Data generation
+  generate_if_missing: true
+  generation_config:
+    num_samples_per_class: 10000
+    signal_length: 1024
+    impairment_config:
+      level: 1  # Cabled/mild impairments
+      snr_db_min: -6
+      snr_db_max: 20
+      cfo_normalized_std: 0.01
+      phase_noise_std: 0.01
+      iq_imbalance_db: 1.0

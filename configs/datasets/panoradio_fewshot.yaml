@@ -1,0 +1,22 @@
+# Panoradio HF few-shot fine-tuning configuration
+# Small training split for adaptation experiments
+
+dataset_type: panoradio
+data_path: data/panoradio
+label_map_path: configs/label_maps/panoradio_to_family.yaml
+
+batch_size: 64  # Smaller batch for few-shot
+num_workers: 4
+seed: 42
+
+extra_config:
+  # Signal processing
+  crop_length: 128
+
+  # Few-shot split (5% for training)
+  train_ratio: 0.05
+  val_ratio: 0.15
+  test_ratio: 0.80
+
+  # Label filtering
+  include_unmapped: false

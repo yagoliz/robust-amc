@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import streamlit as st
@@ -13,15 +13,17 @@ import torch.nn as nn
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from robust_amc.data import (
-    OVERLAPPING_CLASSES,
-    PREPROCESSED_2018_DIR,
     Compose,
     PowerNormalize,
-    is_preprocessed_available,
-    load_radioml2016a,
-    load_radioml2018a,
-    stratified_split,
-    stratified_split_2018,
+    FamilyMapper,
+    TorchSigDataset,
+    PanoradioDataset,
+    get_torchsig_loaders,
+    get_panoradio_loaders,
+    generate_torchsig_data,
+    load_torchsig_data,
+    load_panoradio_data,
+    PANORADIO_SNR_LEVELS,
 )
 from robust_amc.data.channels import RayleighFading, RicianFading
 from robust_amc.data.impairments import (
@@ -30,40 +32,40 @@ from robust_amc.data.impairments import (
     IQImbalance,
     PhaseNoise,
 )
-from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018, SNR_LEVELS_2018
-from robust_amc.data.radioml_loader import MODULATION_CLASSES, SNR_LEVELS
 from robust_amc.data.transforms import ToTensor
-from robust_amc.models import CLSRAMC, PFCNN, create_clsr_amc
+from robust_amc.models import CLSRAMC, PFCNN, create_clsr_amc, create_pfcnn
 
 # Default paths
-DATA_PATH_2016 = Path("data/RML2016.10a_dict.pkl")
-DATA_PATH_2018 = Path("data/GOLD_XYZ_OSC.0001_1024.hdf5")
+TORCHSIG_CACHE_DIR = Path("data/torchsig_train")
+PANORADIO_DIR = Path("data/panoradio")
 
-# For backwards compatibility
-DATA_PATH = DATA_PATH_2016
+# Family names (shared between TorchSig and Panoradio)
+TORCHSIG_FAMILIES = ["PSK", "FSK", "AM", "SSB", "QAM"]
+PANORADIO_FAMILIES = ["PSK", "FSK", "AM", "SSB", "OTHER"]
 
-# Model checkpoint paths (match training script defaults)
+# Default SNR levels for synthetic data
+SNR_LEVELS = list(range(-12, 22, 2))
+
+# Model checkpoint paths
 MODEL_CHECKPOINTS = {
-    "PF-CNN Baseline": Path("checkpoints/baseline_2016/best_model.pt"),
-    "PF-CNN + MDA-DMC": Path("checkpoints/mda_dmc_2016/best_model.pt"),
-    "CLSR-AMC": Path("checkpoints/clsr_amc_2016/best_model.pt"),
-    "PF-CNN Baseline (2018)": Path("checkpoints/baseline_2018/best_model.pt"),
+    "PF-CNN (TorchSig)": Path("checkpoints/pfcnn_torchsig/best_model.pt"),
+    "PF-CNN + Augment": Path("checkpoints/pfcnn_augmented/best_model.pt"),
+    "CLSR-AMC": Path("checkpoints/clsr_amc/best_model.pt"),
 }
 
-# Models trained on RadioML2018 (24 classes)
-MODELS_2018 = {"PF-CNN Baseline (2018)"}
+# Number of classes for each model
+MODEL_NUM_CLASSES = {
+    "PF-CNN (TorchSig)": 5,
+    "PF-CNN + Augment": 5,
+    "CLSR-AMC": 5,
+}
 
 
-def is_model_2018(model_name: str) -> bool:
-    """Check if a model was trained on RadioML2018."""
-    return model_name in MODELS_2018
-
-
-def get_model_class_names(model_name: str) -> list[str]:
-    """Get the class names for a model based on its training dataset."""
-    if model_name in MODELS_2018:
-        return MODULATION_CLASSES_2018
-    return MODULATION_CLASSES
+def get_family_names(dataset: str = "torchsig") -> list[str]:
+    """Get family names for a dataset."""
+    if dataset.lower() == "panoradio":
+        return PANORADIO_FAMILIES
+    return TORCHSIG_FAMILIES
 
 
 def get_available_models() -> list[str]:
@@ -76,12 +78,11 @@ def get_available_models() -> list[str]:
 
 
 @st.cache_resource
-def load_model_by_name(model_name: str) -> Union[PFCNN, CLSRAMC, None]:
+def load_model_by_name(model_name: str) -> Optional[Union[PFCNN, CLSRAMC]]:
     """Load a model by name (cached).
 
     Args:
-        model_name: One of "PF-CNN Baseline", "PF-CNN + MDA-DMC", "CLSR-AMC",
-                   or "PF-CNN Baseline (2018)"
+        model_name: Model name from MODEL_CHECKPOINTS
 
     Returns:
         Loaded model or None if not found
@@ -95,18 +96,13 @@ def load_model_by_name(model_name: str) -> Union[PFCNN, CLSRAMC, None]:
         st.warning(f"Model checkpoint not found at {checkpoint_path}")
         return None
 
-    # Determine number of classes based on model
-    if model_name in MODELS_2018:
-        num_classes = len(MODULATION_CLASSES_2018)
-    else:
-        num_classes = len(MODULATION_CLASSES)
+    num_classes = MODEL_NUM_CLASSES.get(model_name, 5)
 
     # Create appropriate model architecture
-    if model_name == "CLSR-AMC":
+    if "CLSR" in model_name:
         model = create_clsr_amc(num_classes=num_classes, variant="default")
     else:
-        # Baseline and MDA-DMC use PF-CNN architecture
-        model = PFCNN(num_classes=num_classes)
+        model = create_pfcnn(num_classes=num_classes, variant="default")
 
     # Load weights
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -120,247 +116,165 @@ def load_model_by_name(model_name: str) -> Union[PFCNN, CLSRAMC, None]:
 
 
 @st.cache_resource
-def load_model(checkpoint_path: Path = None) -> PFCNN:
-    """Load the baseline trained model (cached).
+def load_model(checkpoint_path: Optional[Path] = None, num_classes: int = 5) -> Optional[PFCNN]:
+    """Load a PF-CNN model from checkpoint (cached).
 
-    For backwards compatibility - loads baseline model by default.
+    For backwards compatibility.
     """
     if checkpoint_path is None:
-        checkpoint_path = MODEL_CHECKPOINTS["PF-CNN Baseline"]
+        checkpoint_path = MODEL_CHECKPOINTS.get("PF-CNN (TorchSig)")
+        if checkpoint_path is None:
+            return None
 
-    model = PFCNN(num_classes=len(MODULATION_CLASSES))
-
-    if checkpoint_path.exists():
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        if "model_state_dict" in checkpoint:
-            model.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            model.load_state_dict(checkpoint)
-        model.eval()
-        return model
-    else:
+    if not checkpoint_path.exists():
         st.warning(f"Model checkpoint not found at {checkpoint_path}")
         return None
 
+    model = create_pfcnn(num_classes=num_classes, variant="default")
 
-@st.cache_resource
-def _load_preprocessed_2018_cached() -> dict:
-    """Load preprocessed 2018 dataset with resource caching.
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        model.load_state_dict(checkpoint)
+    model.eval()
 
-    Uses @st.cache_resource instead of @st.cache_data because the
-    memory-mapped arrays cannot be serialized.
-    """
-    return _load_preprocessed_2018()
+    return model
 
 
 @st.cache_data
-def load_dataset(data_path: Path = DATA_PATH, dataset_version: str = "2016") -> dict:
-    """Load and split the dataset (cached).
+def load_dataset(dataset_name: str = "torchsig") -> Optional[dict]:
+    """Load dataset (cached).
 
     Args:
-        data_path: Path to dataset file
-        dataset_version: "2016" or "2018"
+        dataset_name: "torchsig" or "panoradio"
 
     Returns:
-        Dictionary with train/val/test splits and metadata
+        Dictionary with data splits and metadata
     """
-    if dataset_version == "2018":
-        # Prefer preprocessed format if available (much faster)
-        if is_preprocessed_available():
-            # Use resource caching for memory-mapped arrays
-            return _load_preprocessed_2018_cached()
-
-        # Fall back to HDF5 (slow but works)
-        if not data_path.exists():
-            return None
-
-        st.warning(
-            "Using raw HDF5 format (slow). "
-            "Run `uv run python scripts/preprocess_radioml2018.py` for faster loading."
-        )
-        data, labels, snrs, class_names = load_radioml2018a(
-            data_path,
-            split_segments=True,
-            overlapping_only=False,
-        )
-        splits = stratified_split_2018(data, labels, snrs)
-        return {
-            "train": splits["train"],
-            "val": splits["val"],
-            "test": splits["test"],
-            "class_names": class_names,
-            "snr_levels": SNR_LEVELS_2018,
-            "dataset_version": "2018",
-        }
+    if dataset_name.lower() == "torchsig":
+        return _load_torchsig_dataset()
+    elif dataset_name.lower() == "panoradio":
+        return _load_panoradio_dataset()
     else:
-        if not data_path.exists():
+        st.error(f"Unknown dataset: {dataset_name}")
+        return None
+
+
+def _load_torchsig_dataset() -> Optional[dict]:
+    """Load TorchSig dataset."""
+    if not TORCHSIG_CACHE_DIR.exists():
+        st.info("Generating TorchSig data (first time only)...")
+        try:
+            generate_torchsig_data(
+                TORCHSIG_CACHE_DIR,
+                num_samples_per_class=2000,
+                signal_length=1024,
+            )
+        except Exception as e:
+            st.error(f"Failed to generate TorchSig data: {e}")
             return None
 
-        data, labels, snrs = load_radioml2016a(data_path)
-        splits = stratified_split(data, labels, snrs)
+    try:
+        data, labels, snrs = load_torchsig_data(TORCHSIG_CACHE_DIR)
+        mapper = FamilyMapper(Path("configs/label_maps/torchsig_to_family.yaml"))
+
+        # Map labels to family indices
+        family_indices = np.array([mapper.get_family_idx(str(lbl)) or -1 for lbl in labels])
+        valid_mask = family_indices >= 0
+        data = data[valid_mask]
+        labels = labels[valid_mask]
+        snrs = snrs[valid_mask]
+        family_indices = family_indices[valid_mask]
+
+        # Simple split (60/20/20)
+        n = len(data)
+        n_train = int(0.6 * n)
+        n_val = int(0.2 * n)
+
+        indices = np.random.permutation(n)
+        train_idx = indices[:n_train]
+        val_idx = indices[n_train : n_train + n_val]
+        test_idx = indices[n_train + n_val :]
+
         return {
-            "train": splits["train"],
-            "val": splits["val"],
-            "test": splits["test"],
-            "class_names": MODULATION_CLASSES,
+            "train": (data[train_idx], family_indices[train_idx], snrs[train_idx]),
+            "val": (data[val_idx], family_indices[val_idx], snrs[val_idx]),
+            "test": (data[test_idx], family_indices[test_idx], snrs[test_idx]),
+            "raw_labels": labels,
+            "family_names": mapper.family_names,
             "snr_levels": SNR_LEVELS,
-            "dataset_version": "2016",
+            "dataset_name": "TorchSig",
         }
+    except Exception as e:
+        st.error(f"Failed to load TorchSig data: {e}")
+        return None
 
 
-class _MappedSplitView:
-    """View into memory-mapped arrays for a specific split.
-
-    Keeps the underlying data memory-mapped. Labels and SNRs are loaded
-    eagerly (they're small), but signal data is only loaded on-demand
-    when specific samples are requested.
-    """
-
-    def __init__(self, data_mmap, labels_mmap, snrs_mmap, indices):
-        self._data_mmap = data_mmap  # Keep memory-mapped
-        self._indices = indices
-        # Labels and SNRs are small - load them for fast filtering
-        self._labels = np.array(labels_mmap[indices])
-        self._snrs = np.array(snrs_mmap[indices])
-
-    def __getitem__(self, idx):
-        """Support tuple unpacking and indexing."""
-        if isinstance(idx, int):
-            if idx == 0:
-                return self  # Return self for data - it handles __getitem__
-            elif idx == 1:
-                return self._labels
-            elif idx == 2:
-                return self._snrs
-            raise IndexError(f"Index {idx} out of range")
-        # Array indexing - load only requested samples from mmap
-        real_indices = self._indices[idx]
-        return np.array(self._data_mmap[real_indices])
-
-    def __iter__(self):
-        """Support tuple unpacking: data, labels, snrs = split."""
-        yield self  # data (this object handles array access)
-        yield self._labels
-        yield self._snrs
-
-    def __len__(self):
-        return 3
-
-    @property
-    def shape(self):
-        return (len(self._indices), 2, self._data_mmap.shape[2])
-
-
-class _MappedDataProxy:
-    """Proxy for data array that loads from mmap on access."""
-
-    def __init__(self, data_mmap, indices):
-        self._data_mmap = data_mmap
-        self._indices = indices
-        self._shape = (len(indices), 2, data_mmap.shape[2])
-
-    @property
-    def shape(self):
-        return self._shape
-
-    def __getitem__(self, idx):
-        """Load only requested samples from memory-mapped array."""
-        if isinstance(idx, (int, np.integer)):
-            # Single sample
-            real_idx = self._indices[idx]
-            return np.array(self._data_mmap[real_idx])
-        elif isinstance(idx, np.ndarray) and idx.dtype == bool:
-            # Boolean mask - convert to integer indices
-            int_indices = np.where(idx)[0]
-            real_indices = self._indices[int_indices]
-            return np.array(self._data_mmap[real_indices])
-        elif isinstance(idx, (list, np.ndarray)):
-            # Multiple samples - load only these
-            real_indices = self._indices[idx]
-            return np.array(self._data_mmap[real_indices])
-        elif isinstance(idx, slice):
-            # Slice - convert to indices
-            slice_indices = range(*idx.indices(len(self._indices)))
-            real_indices = self._indices[list(slice_indices)]
-            return np.array(self._data_mmap[real_indices])
-        raise TypeError(f"Invalid index type: {type(idx)}")
-
-    def __len__(self):
-        return len(self._indices)
-
-
-def _load_preprocessed_2018() -> dict:
-    """Load preprocessed RadioML2018 dataset efficiently.
-
-    Uses memory-mapped arrays - signal data is only loaded when specific
-    samples are accessed, not at initial load time. Labels and SNRs are
-    loaded eagerly since they're small and needed for filtering.
-    """
-    import json
-
-    preprocessed_dir = PREPROCESSED_2018_DIR
-
-    # Load memory-mapped arrays (instant, no data loaded yet)
-    data = np.load(preprocessed_dir / "data.npy", mmap_mode="r")
-    labels = np.load(preprocessed_dir / "labels.npy", mmap_mode="r")
-    snrs = np.load(preprocessed_dir / "snrs.npy", mmap_mode="r")
-
-    # Load metadata (small, loads instantly)
-    with open(preprocessed_dir / "metadata.json") as f:
-        metadata = json.load(f)
-
-    # Load pre-computed split indices (small, loads instantly)
-    train_idx = np.load(preprocessed_dir / "indices" / "train.npy")
-    val_idx = np.load(preprocessed_dir / "indices" / "val.npy")
-    test_idx = np.load(preprocessed_dir / "indices" / "test.npy")
-
-    # Create proxy objects that load data on-demand
-    def make_split(indices):
-        return (
-            _MappedDataProxy(data, indices),
-            np.array(labels[indices]),  # Small, load eagerly
-            np.array(snrs[indices]),    # Small, load eagerly
+def _load_panoradio_dataset() -> Optional[dict]:
+    """Load Panoradio dataset."""
+    if not PANORADIO_DIR.exists():
+        st.warning(
+            f"Panoradio data not found at {PANORADIO_DIR}. "
+            "Download from: https://panoradio-sdr.de/radio-signal-classification-dataset/"
         )
+        return None
 
-    return {
-        "train": make_split(train_idx),
-        "val": make_split(val_idx),
-        "test": make_split(test_idx),
-        "class_names": metadata["class_names"],
-        "snr_levels": metadata["snr_levels"],
-        "dataset_version": "2018",
-    }
+    try:
+        data, labels, snrs = load_panoradio_data(PANORADIO_DIR)
+        mapper = FamilyMapper(Path("configs/label_maps/panoradio_to_family.yaml"))
+
+        # Map labels to family indices
+        family_indices = np.array([mapper.get_family_idx(str(lbl)) or -1 for lbl in labels])
+        valid_mask = family_indices >= 0
+        data = data[valid_mask]
+        labels = labels[valid_mask]
+        snrs = snrs[valid_mask]
+        family_indices = family_indices[valid_mask]
+
+        # Simple split (20/80 for zero-shot style eval)
+        n = len(data)
+        n_val = int(0.2 * n)
+
+        indices = np.random.permutation(n)
+        val_idx = indices[:n_val]
+        test_idx = indices[n_val:]
+
+        return {
+            "val": (data[val_idx], family_indices[val_idx], snrs[val_idx]),
+            "test": (data[test_idx], family_indices[test_idx], snrs[test_idx]),
+            "raw_labels": labels,
+            "family_names": mapper.family_names,
+            "snr_levels": PANORADIO_SNR_LEVELS,
+            "dataset_name": "Panoradio",
+        }
+    except Exception as e:
+        st.error(f"Failed to load Panoradio data: {e}")
+        return None
 
 
 def get_available_datasets() -> list[str]:
     """Get list of available datasets."""
     available = []
-    if DATA_PATH_2016.exists():
-        available.append("RadioML2016.10a")
-    # 2018 is available if either preprocessed or raw HDF5 exists
-    if is_preprocessed_available() or DATA_PATH_2018.exists():
-        available.append("RadioML2018.01a")
+
+    # TorchSig is always available (can be generated)
+    available.append("TorchSig")
+
+    # Panoradio requires data download
+    if PANORADIO_DIR.exists() and (PANORADIO_DIR / "rscd_2048.npy").exists():
+        available.append("Panoradio")
+
     return available
-
-
-def get_dataset_path(dataset_name: str) -> Path:
-    """Get path for a dataset name."""
-    if "2018" in dataset_name:
-        return DATA_PATH_2018
-    return DATA_PATH_2016
-
-
-def get_dataset_version(dataset_name: str) -> str:
-    """Get version string for a dataset name."""
-    if "2018" in dataset_name:
-        return "2018"
-    return "2016"
 
 
 def normalize_signal(signal: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     """Normalize signal to unit power."""
-    power = np.mean(signal[0] ** 2 + signal[1] ** 2)
-    return signal / np.sqrt(power + eps)
+    if np.iscomplexobj(signal):
+        power = np.mean(np.abs(signal) ** 2)
+        return signal / np.sqrt(power + eps)
+    else:
+        power = np.mean(signal[0] ** 2 + signal[1] ** 2)
+        return signal / np.sqrt(power + eps)
 
 
 def normalize_samples(samples: np.ndarray) -> np.ndarray:
@@ -368,39 +282,39 @@ def normalize_samples(samples: np.ndarray) -> np.ndarray:
     return np.array([normalize_signal(s) for s in samples])
 
 
-def get_samples_for_modulation(
+def complex_to_iq(signal: np.ndarray) -> np.ndarray:
+    """Convert complex signal to I/Q format."""
+    if np.iscomplexobj(signal):
+        return np.stack([signal.real, signal.imag], axis=0).astype(np.float32)
+    return signal
+
+
+def get_samples_for_family(
     data: np.ndarray,
     labels: np.ndarray,
     snrs: np.ndarray,
-    modulation: str,
-    snr: int,
+    family_idx: int,
+    snr: float,
     n_samples: int = 10,
     normalize: bool = True,
-    class_names: list[str] = None,
-) -> np.ndarray:
-    """Get samples for a specific modulation and SNR.
+) -> Optional[np.ndarray]:
+    """Get samples for a specific family and SNR.
 
     Args:
-        data: Signal data array or proxy
-        labels: Label array
+        data: Signal data array (can be complex or I/Q)
+        labels: Family index array
         snrs: SNR array
-        modulation: Modulation name to filter by
+        family_idx: Family index to filter by
         snr: SNR value to filter by
         n_samples: Number of samples to return
         normalize: Whether to normalize samples to unit power
-        class_names: List of class names (defaults to 2016 classes)
 
     Returns:
         Array of samples or None if no matching samples found
     """
-    if class_names is None:
-        class_names = MODULATION_CLASSES
-
-    if modulation not in class_names:
-        return None
-
-    mod_idx = class_names.index(modulation)
-    mask = (labels == mod_idx) & (snrs == snr)
+    # Find matching samples
+    snr_tolerance = 1.0  # Allow 1 dB tolerance for SNR matching
+    mask = (labels == family_idx) & (np.abs(snrs - snr) <= snr_tolerance)
     indices = np.where(mask)[0]
 
     if len(indices) == 0:
@@ -409,6 +323,10 @@ def get_samples_for_modulation(
     n = min(n_samples, len(indices))
     selected = np.random.choice(indices, size=n, replace=False)
     samples = data[selected]
+
+    # Convert complex to I/Q if needed
+    if np.iscomplexobj(samples):
+        samples = np.stack([samples.real, samples.imag], axis=1).astype(np.float32)
 
     if normalize:
         samples = normalize_samples(samples)
@@ -428,6 +346,10 @@ def apply_impairments(
 ) -> np.ndarray:
     """Apply a chain of impairments to a signal."""
     result = signal.copy()
+
+    # Convert complex to I/Q if needed
+    if np.iscomplexobj(result):
+        result = complex_to_iq(result)
 
     # Apply CFO
     if cfo_hz != 0:
@@ -459,11 +381,15 @@ def apply_fading(
     signal: np.ndarray,
     fading_type: str = "none",
     k_factor: float = 1.0,
-    seed: int = None,
+    seed: Optional[int] = None,
 ) -> np.ndarray:
     """Apply fading channel to a signal."""
     if fading_type == "none":
         return signal
+
+    # Convert complex to I/Q if needed
+    if np.iscomplexobj(signal):
+        signal = complex_to_iq(signal)
 
     if fading_type == "rayleigh":
         channel = RayleighFading(seed=seed)
@@ -475,20 +401,39 @@ def apply_fading(
     return channel(signal)
 
 
-def predict_modulation(
+def predict_family(
     model: nn.Module,
     signal: np.ndarray,
+    family_names: list[str],
     normalize: bool = True,
-) -> tuple[str, np.ndarray]:
-    """Run inference on a signal and return prediction.
+    crop_length: int = 128,
+) -> tuple[Optional[str], Optional[np.ndarray]]:
+    """Run inference on a signal and return family prediction.
 
-    Works with both PFCNN and CLSRAMC models, including 2018 variants.
+    Args:
+        model: Trained model
+        signal: Input signal (complex or I/Q format)
+        family_names: List of family names
+        normalize: Whether to normalize the signal
+        crop_length: Crop signal to this length
 
     Returns:
-        Tuple of (predicted_class_name, probabilities)
+        Tuple of (predicted_family_name, probabilities)
     """
     if model is None:
         return None, None
+
+    # Convert complex to I/Q if needed
+    if np.iscomplexobj(signal):
+        signal = complex_to_iq(signal)
+
+    # Crop to expected length
+    if signal.shape[1] > crop_length:
+        start = (signal.shape[1] - crop_length) // 2
+        signal = signal[:, start : start + crop_length]
+    elif signal.shape[1] < crop_length:
+        pad = crop_length - signal.shape[1]
+        signal = np.pad(signal, ((0, 0), (0, pad)), mode="constant")
 
     # Prepare input
     if normalize:
@@ -500,8 +445,7 @@ def predict_modulation(
     # Add batch dimension
     x = x.unsqueeze(0)
 
-    # Move input to same device as model (handles cached models that may have been
-    # moved to MPS/CUDA by other pages)
+    # Move input to same device as model
     device = next(model.parameters()).device
     x = x.to(device)
 
@@ -511,11 +455,16 @@ def predict_modulation(
         probs = torch.softmax(logits, dim=1).squeeze().cpu().numpy()
         pred_idx = logits.argmax(dim=1).item()
 
-    # Determine class names based on model's number of classes
-    num_classes = logits.shape[1]
-    if num_classes == len(MODULATION_CLASSES_2018):
-        class_names = MODULATION_CLASSES_2018
-    else:
-        class_names = MODULATION_CLASSES
+    if pred_idx < len(family_names):
+        return family_names[pred_idx], probs
+    return None, probs
 
-    return class_names[pred_idx], probs
+
+# Backwards compatibility alias
+def predict_modulation(
+    model: nn.Module,
+    signal: np.ndarray,
+    normalize: bool = True,
+) -> tuple[Optional[str], Optional[np.ndarray]]:
+    """Backwards compatible prediction function."""
+    return predict_family(model, signal, TORCHSIG_FAMILIES, normalize)

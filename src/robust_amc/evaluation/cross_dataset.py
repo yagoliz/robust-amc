@@ -1,195 +1,61 @@
-"""Cross-dataset evaluation utilities for domain shift analysis."""
+"""Cross-dataset evaluation utilities for domain shift analysis.
+
+This module provides utilities for evaluating models across different datasets
+(TorchSig synthetic → Panoradio real-world) using the family label abstraction.
+"""
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from robust_amc.data import (
-    CLASS_NAME_MAPPING_2018_TO_2016,
-    OVERLAPPING_CLASSES,
-    Compose,
-    PowerNormalize,
-    load_radioml2016a,
-    load_radioml2018a,
-)
-from robust_amc.data.radioml2018_loader import MODULATION_CLASSES_2018 as CLASSES_2018
-from robust_amc.data.radioml_loader import MODULATION_CLASSES as CLASSES_2016
+from robust_amc.data import Compose, PowerNormalize
 from robust_amc.data.transforms import ToTensor
 from robust_amc.evaluation import accuracy_by_snr
 
 
-def get_class_mapping(
-    source_classes: list[str],
-    target_classes: list[str] = None,
-    use_2018_mapping: bool = False,
-) -> dict[int, int]:
-    """Get mapping from source class indices to target (overlapping) class indices.
-
-    Args:
-        source_classes: List of class names from training dataset
-        target_classes: Target class list (default: OVERLAPPING_CLASSES)
-        use_2018_mapping: Whether source uses 2018 naming convention
-
-    Returns:
-        Dictionary mapping source class index to target class index
-    """
-    if target_classes is None:
-        target_classes = OVERLAPPING_CLASSES
-
-    mapping = {}
-    for src_idx, src_name in enumerate(source_classes):
-        if use_2018_mapping:
-            # 2018 names need mapping via CLASS_NAME_MAPPING_2018_TO_2016
-            if src_name in CLASS_NAME_MAPPING_2018_TO_2016:
-                mapped_name = CLASS_NAME_MAPPING_2018_TO_2016[src_name]
-                if mapped_name in target_classes:
-                    mapping[src_idx] = target_classes.index(mapped_name)
-        else:
-            # 2016 names are used directly
-            if src_name in target_classes:
-                mapping[src_idx] = target_classes.index(src_name)
-
-    return mapping
-
-
-def load_overlapping_data(
-    dataset: str,
-    data_path_2016: Optional[Path] = None,
-    data_path_2018: Optional[Path] = None,
-    max_samples: Optional[int] = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
-    """Load evaluation dataset with overlapping classes only.
-
-    Returns data with class indices mapped to OVERLAPPING_CLASSES order.
-
-    Args:
-        dataset: "2016" or "2018"
-        data_path_2016: Path to RadioML 2016 dataset
-        data_path_2018: Path to RadioML 2018 dataset
-        max_samples: Maximum samples to load (for faster testing)
-
-    Returns:
-        Tuple of (data, labels, snrs, class_names) where labels are
-        indices into OVERLAPPING_CLASSES
-    """
-    if dataset == "2016":
-        if data_path_2016 is None:
-            data_path_2016 = Path("data/RML2016.10a_dict.pkl")
-        if not data_path_2016.exists():
-            raise FileNotFoundError(f"Dataset not found: {data_path_2016}")
-
-        data, labels, snrs = load_radioml2016a(data_path_2016)
-
-        # Filter to overlapping classes and remap indices
-        overlap_indices_2016 = [CLASSES_2016.index(c) for c in OVERLAPPING_CLASSES if c in CLASSES_2016]
-        mask = np.isin(labels, overlap_indices_2016)
-        data = data[mask]
-        labels_orig = labels[mask]
-        snrs = snrs[mask]
-
-        # Remap to OVERLAPPING_CLASSES order
-        old_to_new = {CLASSES_2016.index(c): OVERLAPPING_CLASSES.index(c)
-                      for c in OVERLAPPING_CLASSES if c in CLASSES_2016}
-        labels = np.array([old_to_new[l] for l in labels_orig])
-
-    else:  # 2018
-        if data_path_2018 is None:
-            data_path_2018 = Path("data/GOLD_XYZ_OSC.0001_1024.hdf5")
-        if not data_path_2018.exists():
-            raise FileNotFoundError(f"Dataset not found: {data_path_2018}")
-
-        data, labels, snrs, class_names = load_radioml2018a(
-            data_path_2018,
-            split_segments=True,
-            overlapping_only=True,
-        )
-
-        # Map 2018 class names to OVERLAPPING_CLASSES order
-        name_2018_to_overlap = {}
-        for name_2018, name_2016 in CLASS_NAME_MAPPING_2018_TO_2016.items():
-            if name_2016 in OVERLAPPING_CLASSES:
-                name_2018_to_overlap[name_2018] = OVERLAPPING_CLASSES.index(name_2016)
-
-        old_to_new = {i: name_2018_to_overlap[class_names[i]]
-                      for i in range(len(class_names))
-                      if class_names[i] in name_2018_to_overlap}
-
-        # Filter to classes we can map
-        valid_old_indices = list(old_to_new.keys())
-        mask = np.isin(labels, valid_old_indices)
-        data = data[mask]
-        labels_orig = labels[mask]
-        snrs = snrs[mask]
-        labels = np.array([old_to_new[l] for l in labels_orig])
-
-    # Limit samples if requested
-    if max_samples is not None and len(data) > max_samples:
-        indices = np.random.choice(len(data), max_samples, replace=False)
-        data = data[indices]
-        labels = labels[indices]
-        snrs = snrs[indices]
-
-    return data, labels, snrs, OVERLAPPING_CLASSES
-
-
-def evaluate_cross_dataset(
+def evaluate_family_model(
     model: torch.nn.Module,
-    data: np.ndarray,
-    labels: np.ndarray,
-    snrs: np.ndarray,
+    data_loader: DataLoader,
     device: str,
-    train_class_to_overlap: dict,
-    batch_size: int = 256,
-) -> dict:
-    """Evaluate model with class mapping for cross-dataset evaluation.
+    family_names: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Evaluate a model trained on family labels.
 
     Args:
         model: The trained model
-        data: Input data
-        labels: Target labels (in overlapping class indices)
-        snrs: SNR values
-        device: Device to use
-        train_class_to_overlap: Mapping from training class indices to overlapping class indices
-        batch_size: Batch size
+        data_loader: DataLoader yielding (x, y, snr) batches
+        device: Device to use for inference
+        family_names: Optional list of family names for the confusion matrix
 
     Returns:
-        Dictionary with accuracy, snr_accuracy, predictions, targets, snrs
+        Dictionary with:
+            - accuracy: Overall accuracy
+            - snr_accuracy: Dict mapping SNR to accuracy
+            - predictions: Array of predicted labels
+            - targets: Array of true labels
+            - snrs: Array of SNR values
     """
     model = model.to(device)
     model.eval()
-
-    transform = Compose([PowerNormalize(), ToTensor()])
 
     all_preds = []
     all_targets = []
     all_snrs = []
 
     with torch.no_grad():
-        for i in range(0, len(data), batch_size):
-            batch_data = data[i:i + batch_size]
-            batch_labels = labels[i:i + batch_size]
-            batch_snrs = snrs[i:i + batch_size]
+        for batch in data_loader:
+            x, y, snr = batch
+            x = x.to(device)
 
-            # Transform batch
-            x_batch = torch.stack([transform(x) for x in batch_data]).to(device)
-
-            # Forward pass
-            logits = model(x_batch)
-
-            # Map model output to overlapping class indices
-            # Only consider logits for overlapping classes
-            overlap_indices = sorted(train_class_to_overlap.keys())
-            logits_overlap = logits[:, overlap_indices]
-            preds_in_overlap = logits_overlap.argmax(dim=1).cpu().numpy()
-            # Map back to the overlap class index
-            preds = np.array([train_class_to_overlap[overlap_indices[p]] for p in preds_in_overlap])
+            logits = model(x)
+            preds = logits.argmax(dim=1).cpu().numpy()
 
             all_preds.extend(preds)
-            all_targets.extend(batch_labels)
-            all_snrs.extend(batch_snrs)
+            all_targets.extend(y.numpy())
+            all_snrs.extend(snr.numpy())
 
     predictions = np.array(all_preds)
     targets = np.array(all_targets)
@@ -199,10 +65,197 @@ def evaluate_cross_dataset(
     accuracy = (predictions == targets).mean()
     snr_acc = accuracy_by_snr(targets, predictions, snrs_arr)
 
-    return {
+    result = {
         "accuracy": float(accuracy),
         "snr_accuracy": snr_acc,
         "predictions": predictions,
         "targets": targets,
         "snrs": snrs_arr,
     }
+
+    if family_names:
+        result["family_names"] = family_names
+
+    return result
+
+
+def evaluate_cross_domain(
+    model: torch.nn.Module,
+    source_loader: DataLoader,
+    target_loader: DataLoader,
+    device: str,
+    family_names: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Evaluate cross-domain performance (source vs target).
+
+    Args:
+        model: The trained model
+        source_loader: DataLoader for source domain (e.g., TorchSig)
+        target_loader: DataLoader for target domain (e.g., Panoradio)
+        device: Device to use for inference
+        family_names: Optional list of family names
+
+    Returns:
+        Dictionary with:
+            - source: Evaluation results on source domain
+            - target: Evaluation results on target domain
+            - domain_gap: Accuracy drop from source to target
+    """
+    source_results = evaluate_family_model(model, source_loader, device, family_names)
+    target_results = evaluate_family_model(model, target_loader, device, family_names)
+
+    domain_gap = source_results["accuracy"] - target_results["accuracy"]
+
+    return {
+        "source": source_results,
+        "target": target_results,
+        "domain_gap": float(domain_gap),
+    }
+
+
+def evaluate_ood_gap(
+    model: torch.nn.Module,
+    id_loader: DataLoader,
+    ood_loader: DataLoader,
+    device: str,
+    family_names: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Evaluate in-distribution vs out-of-distribution performance.
+
+    Args:
+        model: The trained model
+        id_loader: DataLoader for in-distribution test data
+        ood_loader: DataLoader for out-of-distribution test data
+        device: Device to use for inference
+        family_names: Optional list of family names
+
+    Returns:
+        Dictionary with:
+            - in_distribution: Evaluation results on ID data
+            - out_of_distribution: Evaluation results on OOD data
+            - ood_gap: Accuracy drop from ID to OOD
+    """
+    id_results = evaluate_family_model(model, id_loader, device, family_names)
+    ood_results = evaluate_family_model(model, ood_loader, device, family_names)
+
+    ood_gap = id_results["accuracy"] - ood_results["accuracy"]
+
+    return {
+        "in_distribution": id_results,
+        "out_of_distribution": ood_results,
+        "ood_gap": float(ood_gap),
+    }
+
+
+def compute_family_confusion_matrix(
+    predictions: np.ndarray,
+    targets: np.ndarray,
+    num_families: int,
+) -> np.ndarray:
+    """Compute confusion matrix for family classification.
+
+    Args:
+        predictions: Predicted family indices
+        targets: True family indices
+        num_families: Number of families
+
+    Returns:
+        Confusion matrix of shape (num_families, num_families)
+    """
+    cm = np.zeros((num_families, num_families), dtype=np.int64)
+    for pred, target in zip(predictions, targets):
+        cm[target, pred] += 1
+    return cm
+
+
+def accuracy_by_family(
+    predictions: np.ndarray,
+    targets: np.ndarray,
+    family_names: list[str],
+) -> dict[str, float]:
+    """Compute per-family accuracy.
+
+    Args:
+        predictions: Predicted family indices
+        targets: True family indices
+        family_names: List of family names
+
+    Returns:
+        Dictionary mapping family name to accuracy
+    """
+    result = {}
+    for i, name in enumerate(family_names):
+        mask = targets == i
+        if mask.sum() > 0:
+            result[name] = float((predictions[mask] == targets[mask]).mean())
+        else:
+            result[name] = 0.0
+    return result
+
+
+def full_evaluation_report(
+    model: torch.nn.Module,
+    train_loader: DataLoader,
+    test_loader: DataLoader,
+    ood_loader: Optional[DataLoader],
+    target_loader: Optional[DataLoader],
+    device: str,
+    family_names: list[str],
+) -> dict[str, Any]:
+    """Generate a comprehensive evaluation report.
+
+    Args:
+        model: The trained model
+        train_loader: Training data loader (for sanity check)
+        test_loader: In-distribution test loader
+        ood_loader: Out-of-distribution test loader (optional)
+        target_loader: Target domain loader (optional, e.g., Panoradio)
+        device: Device to use
+        family_names: List of family names
+
+    Returns:
+        Comprehensive evaluation report with all metrics
+    """
+    report = {
+        "family_names": family_names,
+        "num_families": len(family_names),
+    }
+
+    # In-distribution evaluation
+    test_results = evaluate_family_model(model, test_loader, device, family_names)
+    report["test"] = {
+        "accuracy": test_results["accuracy"],
+        "snr_accuracy": test_results["snr_accuracy"],
+        "per_family_accuracy": accuracy_by_family(
+            test_results["predictions"],
+            test_results["targets"],
+            family_names,
+        ),
+        "confusion_matrix": compute_family_confusion_matrix(
+            test_results["predictions"],
+            test_results["targets"],
+            len(family_names),
+        ).tolist(),
+    }
+
+    # OOD evaluation
+    if ood_loader is not None:
+        ood_results = evaluate_ood_gap(model, test_loader, ood_loader, device, family_names)
+        report["ood"] = {
+            "accuracy": ood_results["out_of_distribution"]["accuracy"],
+            "ood_gap": ood_results["ood_gap"],
+            "snr_accuracy": ood_results["out_of_distribution"]["snr_accuracy"],
+        }
+
+    # Cross-domain evaluation
+    if target_loader is not None:
+        domain_results = evaluate_cross_domain(
+            model, test_loader, target_loader, device, family_names
+        )
+        report["cross_domain"] = {
+            "target_accuracy": domain_results["target"]["accuracy"],
+            "domain_gap": domain_results["domain_gap"],
+            "snr_accuracy": domain_results["target"]["snr_accuracy"],
+        }
+
+    return report

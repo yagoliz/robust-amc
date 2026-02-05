@@ -21,6 +21,10 @@ dependencies = [
     "watchdog>=6.0.0",
 ]
 
+# Note: TorchSig is an optional dependency that must be installed separately
+# from GitHub: pip install git+https://github.com/TorchDSP/torchsig.git
+# The data loaders will use fallback signal generation if TorchSig is not available
+
 [dependency-groups]
 dev = [
     "black>=26.1.0",

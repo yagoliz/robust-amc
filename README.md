@@ -19,9 +19,22 @@ cd modulation-classification
 uv sync
 ```
 
-### Download Dataset
+### Datasets
 
-Download RadioML2016.10a manually from [DeepSig](https://www.deepsig.ai/datasets/) and place it at `data/RML2016.10a_dict.pkl`.
+This project uses two datasets:
+
+**TorchSig (Synthetic)** - Generated automatically on first use
+- 5 modulation families: PSK, FSK, AM, SSB, QAM
+- Configurable SNR range and impairment levels
+- No manual download required
+
+**Panoradio (Real HF)** - Optional, for cross-domain evaluation
+```bash
+# Download from: https://panoradio-sdr.de/radio-signal-classification-dataset/
+# Place files in data/panoradio/:
+#   - rscd_2048.npy (5 GB)
+#   - tags.csv
+```
 
 ### Verify Installation
 
@@ -40,8 +53,10 @@ uv run pytest
 │   ├── training/            # Training loops and diagnostics
 │   ├── evaluation/          # Metrics, visualization, and analysis
 │   └── utils/               # Utilities (seeding, device selection)
-├── scripts/                 # Training scripts
-├── notebooks/               # Analysis notebooks
+├── configs/                 # YAML configuration files
+│   ├── datasets/            # Dataset configs (torchsig, panoradio)
+│   └── label_maps/          # Modulation family mappings
+├── scripts/                 # Training and evaluation scripts
 ├── app/                     # Streamlit demo application
 ├── checkpoints/             # Saved model weights
 ├── results/                 # Evaluation outputs
@@ -53,25 +68,48 @@ uv run pytest
 ### Training
 
 ```bash
-# Train baseline PF-CNN
-uv run python scripts/train_baseline.py
+# Train PF-CNN on TorchSig with family labels
+uv run python scripts/train_pfcnn.py
 
-# Train with MDA-DMC augmentation
-uv run python scripts/train_mda_dmc.py
+# Train with MDA-DMC augmentations
+uv run python scripts/train_pfcnn.py --augment
 
-# Train CLSR-AMC
-uv run python scripts/train_clsr_amc.py
+# Use custom config
+uv run python scripts/train_pfcnn.py --config configs/datasets/torchsig_train.yaml
 ```
 
-Use `--seed 42` for reproducible training runs.
+### Cross-Domain Evaluation
+
+```bash
+# Evaluate on TorchSig-OOD and Panoradio (zero-shot)
+uv run python scripts/evaluate_cross_domain.py --checkpoint checkpoints/pfcnn_torchsig/best_model.pt
+```
 
 ### Interactive Demo
 
 ```bash
-uv run python scripts/run_dashboard.py
-# or directly:
 uv run streamlit run app/Introduction.py
 ```
+
+## Modulation Families
+
+Instead of fine-grained modulation labels, this project uses **modulation families** for cross-dataset evaluation:
+
+| Family | TorchSig Examples | Panoradio Examples |
+|--------|-------------------|-------------------|
+| PSK | BPSK, QPSK, 8PSK | PSK31, QPSK63 |
+| FSK | 2FSK, GFSK, MSK | RTTY, Olivia, DominoEx |
+| AM | AM-DSB, AM-DSB-SC | AM broadcast |
+| SSB | AM-USB, AM-LSB | USB, LSB |
+| QAM/OTHER | 16QAM, 64QAM | CW, MT63, Navtex |
+
+## Key Features
+
+- **Family-based classification**: Enables fair cross-dataset evaluation
+- **TorchSig integration**: Configurable synthetic signal generation with impairments
+- **Panoradio support**: Real HF radio captures for domain transfer evaluation
+- **OOD evaluation**: Separate in-distribution and out-of-distribution test sets
+- **Config-driven**: YAML-based dataset and experiment configuration
 
 ## Development
 
@@ -86,27 +124,12 @@ uv run black src tests
 uv run ruff check src tests
 ```
 
-## Analysis Notebooks
+## Optional: TorchSig Library
 
-After training, explore results using Jupyter notebooks:
-
-```bash
-uv run jupyter lab notebooks/
-```
-
-Available notebooks:
-- `01_data_exploration.ipynb` - Dataset inspection and visualization
-- `02_evaluate_impairments.ipynb` - Robustness evaluation under hardware impairments
-- `03_compare_experiments.ipynb` - Training run comparison and diagnostics
-- `04_analyze_embeddings.ipynb` - t-SNE visualization and cluster analysis
-- `05_cross_dataset_evaluation.ipynb` - Cross-dataset domain shift analysis
-
-## W&B Logging
-
-Enable Weights & Biases logging during training:
+For full TorchSig functionality (advanced signal generation), install from GitHub:
 
 ```bash
-uv run python scripts/train_baseline.py --wandb --epochs 50
-uv run python scripts/train_mda_dmc.py --wandb --epochs 50
-uv run python scripts/train_clsr_amc.py --wandb --epochs 50
+pip install git+https://github.com/TorchDSP/torchsig.git
 ```
+
+Without TorchSig, fallback signal generation is used (sufficient for demonstration).

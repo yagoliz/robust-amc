@@ -1,0 +1,25 @@
+# Panoradio HF evaluation configuration
+# Real-world HF radio captures for domain transfer evaluation
+
+dataset_type: panoradio
+data_path: data/panoradio
+label_map_path: configs/label_maps/panoradio_to_family.yaml
+
+batch_size: 256
+num_workers: 4
+seed: 42
+
+extra_config:
+  # Signal processing
+  crop_length: 128
+
+  # Zero-shot evaluation (no training split)
+  train_ratio: 0.0
+  val_ratio: 0.2
+  test_ratio: 0.8
+
+  # Label filtering
+  include_unmapped: false
+
+  # Optional: uncomment to filter by SNR range
+  # snr_filter: [-10, 25]

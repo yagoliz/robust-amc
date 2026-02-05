@@ -1,0 +1,32 @@
+# TorchSig OOD (out-of-distribution) evaluation configuration
+# Synthetic signals with strong impairments for robustness testing
+
+dataset_type: torchsig
+data_path: data/torchsig_ood
+label_map_path: configs/label_maps/torchsig_to_family.yaml
+
+batch_size: 256
+num_workers: 4
+seed: 42
+
+extra_config:
+  # Signal processing
+  crop_length: 128
+
+  # No training split for OOD - evaluation only
+  train_ratio: 0.0
+  val_ratio: 0.2
+  test_ratio: 0.8
+
+  # Data generation with stronger impairments
+  generate_if_missing: true
+  generation_config:
+    num_samples_per_class: 5000
+    signal_length: 1024
+    impairment_config:
+      level: 2  # Wireless/strong impairments
+      snr_db_min: -12
+      snr_db_max: 6
+      cfo_normalized_std: 0.05
+      phase_noise_std: 0.05
+      iq_imbalance_db: 3.0

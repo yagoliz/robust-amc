@@ -8,11 +8,36 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from robust_amc.data import RadioMLDataset
 from robust_amc.data.channels import RayleighFading, RicianFading
 from robust_amc.data.impairments import CarrierFrequencyOffset, DCOffset, IQImbalance
 from robust_amc.data.transforms import Compose, PowerNormalize, ToTensor
 from robust_amc.evaluation.metrics import accuracy_by_snr, evaluate_model
+
+
+class SimpleDataset(torch.utils.data.Dataset):
+    """Simple dataset for impairment evaluation."""
+
+    def __init__(self, data, labels, snrs, transform=None):
+        self.data = data.astype(np.float32)
+        self.labels = labels.astype(np.int64)
+        self.snrs = snrs.astype(np.float32)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        x = self.data[idx]
+        y = self.labels[idx]
+        snr = self.snrs[idx]
+
+        if self.transform is not None:
+            x = self.transform(x)
+
+        if not isinstance(x, torch.Tensor):
+            x = torch.from_numpy(x)
+
+        return x, y, snr
 
 
 def evaluate_with_impairment(
@@ -45,7 +70,7 @@ def evaluate_with_impairment(
         ToTensor(),
     ])
 
-    dataset = RadioMLDataset(test_data, test_labels, test_snrs, transform=transform)
+    dataset = SimpleDataset(test_data, test_labels, test_snrs, transform=transform)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     results = evaluate_model(model, loader, device)

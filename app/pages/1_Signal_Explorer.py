@@ -13,10 +13,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import (
     load_dataset,
-    get_samples_for_modulation,
+    get_samples_for_family,
     get_available_datasets,
-    get_dataset_path,
-    get_dataset_version,
+    get_family_names,
 )
 
 # Configure matplotlib
@@ -37,60 +36,65 @@ st.markdown("Visualize I/Q signals and constellation diagrams.")
 # Dataset selection
 available_datasets = get_available_datasets()
 if not available_datasets:
-    st.error("No datasets found. Please download RadioML2016.10a or RadioML2018.01a.")
+    st.error("No datasets available. TorchSig will be generated on first use.")
     st.stop()
 
 st.sidebar.header("Dataset")
 selected_dataset = st.sidebar.selectbox("Dataset", available_datasets)
 
 # Load data
-data_path = get_dataset_path(selected_dataset)
-dataset_version = get_dataset_version(selected_dataset)
-dataset = load_dataset(data_path, dataset_version)
+dataset = load_dataset(selected_dataset.lower())
 
 if dataset is None:
     st.error(f"Failed to load {selected_dataset}.")
     st.stop()
 
-# Get class names and SNR levels for selected dataset
-class_names = dataset["class_names"]
+# Get family names and SNR levels for selected dataset
+family_names = dataset["family_names"]
 snr_levels = dataset["snr_levels"]
+
+# Use test set if available, otherwise val
+if "test" in dataset:
+    test_data, test_labels, test_snrs = dataset["test"]
+elif "val" in dataset:
+    test_data, test_labels, test_snrs = dataset["val"]
+else:
+    st.error("No test or validation data available")
+    st.stop()
 
 # Sidebar controls
 st.sidebar.header("Signal Selection")
 
-# Find a good default modulation (QPSK if available)
-default_mod_idx = class_names.index("QPSK") if "QPSK" in class_names else 0
+# Default family selection
+default_family_idx = family_names.index("PSK") if "PSK" in family_names else 0
 
-modulation = st.sidebar.selectbox(
-    "Modulation",
-    class_names,
-    index=default_mod_idx,
+family = st.sidebar.selectbox(
+    "Modulation Family",
+    family_names,
+    index=default_family_idx,
 )
+family_idx = family_names.index(family)
 
 # Find a good default SNR
-default_snr = 10 if 10 in snr_levels else snr_levels[len(snr_levels) // 2]
+snr_list = sorted(set(int(s) for s in test_snrs))
+default_snr = 10 if 10 in snr_list else snr_list[len(snr_list) // 2]
 
 snr = st.sidebar.select_slider(
     "SNR (dB)",
-    options=snr_levels,
+    options=snr_list,
     value=default_snr,
 )
 
-n_samples = st.sidebar.slider("Samples to display", 1, 20, 1)
-
-# Use test set
-test_data, test_labels, test_snrs = dataset["test"]
+n_samples = st.sidebar.slider("Samples to display", 1, 20, 5)
 
 # Get samples
-samples = get_samples_for_modulation(
+samples = get_samples_for_family(
     test_data, test_labels, test_snrs,
-    modulation, snr, n_samples,
-    class_names=class_names,
+    family_idx, snr, n_samples,
 )
 
 if samples is None:
-    st.warning(f"No samples found for {modulation} at {snr} dB")
+    st.warning(f"No samples found for {family} at {snr} dB")
     st.stop()
 
 # Main view
@@ -108,7 +112,7 @@ with col1:
     ax.axvline(x=0, color="gray", linestyle="-", linewidth=0.5, alpha=0.5)
     ax.set_xlabel("I")
     ax.set_ylabel("Q")
-    ax.set_title(f"{modulation} @ {snr} dB")
+    ax.set_title(f"{family} @ {snr} dB")
     ax.set_xlim(-AXIS_LIMIT, AXIS_LIMIT)
     ax.set_ylim(-AXIS_LIMIT, AXIS_LIMIT)
     ax.set_aspect("equal")
@@ -145,19 +149,19 @@ st.markdown("---")
 st.subheader("SNR Comparison")
 
 # Pick 4 representative SNRs from available range
-available_snrs = snr_levels
-snr_list = [s for s in [-10, 0, 10, 18] if s in available_snrs]
-if len(snr_list) < 4:
-    # Fill with evenly spaced SNRs
-    step = max(1, len(available_snrs) // 4)
-    snr_list = available_snrs[::step][:4]
-fig, axes = plt.subplots(1, 4, figsize=(14, 3.5))
+compare_snrs = [s for s in [-10, 0, 10, 20] if s in snr_list]
+if len(compare_snrs) < 4:
+    step = max(1, len(snr_list) // 4)
+    compare_snrs = snr_list[::step][:4]
 
-for ax, snr_val in zip(axes, snr_list):
-    samples_snr = get_samples_for_modulation(
+fig, axes = plt.subplots(1, len(compare_snrs), figsize=(3.5 * len(compare_snrs), 3.5))
+if len(compare_snrs) == 1:
+    axes = [axes]
+
+for ax, snr_val in zip(axes, compare_snrs):
+    samples_snr = get_samples_for_family(
         test_data, test_labels, test_snrs,
-        modulation, snr_val, 20,
-        class_names=class_names,
+        family_idx, snr_val, 20,
     )
 
     if samples_snr is not None:
@@ -173,30 +177,27 @@ for ax, snr_val in zip(axes, snr_list):
     ax.set_aspect("equal")
     ax.grid(True, alpha=0.2)
     ax.set_xlabel("I")
-    if snr_val == snr_list[0]:
+    if snr_val == compare_snrs[0]:
         ax.set_ylabel("Q")
 
-plt.suptitle(f"{modulation} at Different SNRs", fontsize=12)
+plt.suptitle(f"{family} at Different SNRs", fontsize=12)
 plt.tight_layout()
 st.pyplot(fig)
 plt.close(fig)
 
-# Modulation comparison
-st.subheader("Modulation Comparison")
+# Family comparison
+st.subheader("Family Comparison")
 
-# Default modulations that are commonly available
-default_compare = [m for m in ["BPSK", "QPSK", "8PSK", "QAM16", "16QAM"] if m in class_names][:4]
-
-compare_mods = st.multiselect(
-    "Select modulations",
-    class_names,
-    default=default_compare,
+compare_families = st.multiselect(
+    "Select families",
+    family_names,
+    default=family_names[:4],
 )
 
-if compare_mods:
-    n_mods = len(compare_mods)
-    n_cols = min(4, n_mods)
-    n_rows = (n_mods + n_cols - 1) // n_cols
+if compare_families:
+    n_families = len(compare_families)
+    n_cols = min(4, n_families)
+    n_rows = (n_families + n_cols - 1) // n_cols
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.5 * n_cols, 3.5 * n_rows))
 
@@ -208,35 +209,35 @@ if compare_mods:
     elif n_cols == 1:
         axes = axes.reshape(-1, 1)
 
-    for idx, mod in enumerate(compare_mods):
+    for idx, fam in enumerate(compare_families):
         row, col = idx // n_cols, idx % n_cols
         ax = axes[row, col]
 
-        samples_mod = get_samples_for_modulation(
+        fam_idx = family_names.index(fam)
+        samples_fam = get_samples_for_family(
             test_data, test_labels, test_snrs,
-            mod, snr, 20,
-            class_names=class_names,
+            fam_idx, snr, 20,
         )
 
-        if samples_mod is not None:
-            I = samples_mod[:, 0, :].flatten()
-            Q = samples_mod[:, 1, :].flatten()
+        if samples_fam is not None:
+            I = samples_fam[:, 0, :].flatten()
+            Q = samples_fam[:, 1, :].flatten()
             ax.scatter(I, Q, alpha=0.35, s=4, c="#2563eb", edgecolors='none')
 
         ax.axhline(y=0, color="gray", linestyle="-", linewidth=0.3, alpha=0.5)
         ax.axvline(x=0, color="gray", linestyle="-", linewidth=0.3, alpha=0.5)
-        ax.set_title(mod)
+        ax.set_title(fam)
         ax.set_xlim(-AXIS_LIMIT, AXIS_LIMIT)
         ax.set_ylim(-AXIS_LIMIT, AXIS_LIMIT)
         ax.set_aspect("equal")
         ax.grid(True, alpha=0.2)
 
     # Hide empty subplots
-    for idx in range(len(compare_mods), n_rows * n_cols):
+    for idx in range(len(compare_families), n_rows * n_cols):
         row, col = idx // n_cols, idx % n_cols
         axes[row, col].set_visible(False)
 
-    plt.suptitle(f"Modulations @ {snr} dB SNR", fontsize=12)
+    plt.suptitle(f"Families @ {snr} dB SNR", fontsize=12)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
