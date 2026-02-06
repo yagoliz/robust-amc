@@ -7,11 +7,11 @@ label_map_path: configs/label_maps/torchsig_to_family.yaml
 
 batch_size: 256
 num_workers: 4
-seed: 42
+seed: 21
 
 extra_config:
   # Signal processing
-  crop_length: 128
+  crop_length: 1024
 
   # Split ratios
   train_ratio: 0.6
@@ -19,7 +19,7 @@ extra_config:
   test_ratio: 0.2
 
   # Data generation
-  generate_if_missing: true
+  generate_if_missing: false
   generation_config:
     num_samples_per_class: 10000
     signal_length: 1024
