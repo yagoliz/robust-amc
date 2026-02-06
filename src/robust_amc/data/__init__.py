@@ -59,6 +59,11 @@ from .augmentations import (
     SSC,
     RSSC,
 )
+from .contrastive import (
+    ContrastiveDataset,
+    contrastive_collate_fn,
+    get_contrastive_loaders,
+)
 
 __all__ = [
     # Label mapping (family abstraction)
@@ -119,4 +124,8 @@ __all__ = [
     "RSC",
     "SSC",
     "RSSC",
+    # Contrastive data pipeline
+    "ContrastiveDataset",
+    "contrastive_collate_fn",
+    "get_contrastive_loaders",
 ]

@@ -458,42 +458,38 @@ def load_torchsig_data(
     return data, labels, snrs
 
 
-def get_torchsig_loaders(
+def _load_and_split_torchsig(
     cache_dir: str | Path,
-    batch_size: int = 256,
-    train_transform: Optional[Callable] = None,
-    eval_transform: Optional[Callable] = None,
     family_mapper: Optional[FamilyMapper] = None,
+    transform: Optional[Callable] = None,
     crop_length: int = 128,
     train_ratio: float = 0.6,
     val_ratio: float = 0.2,
     test_ratio: float = 0.2,
-    num_workers: int = 4,
     seed: int = 42,
     generate_if_missing: bool = True,
     generation_config: Optional[dict] = None,
-    device: str = "cpu"
-) -> dict[str, Any]:
-    """Create DataLoaders for TorchSig dataset.
+) -> tuple[TorchSigDataset, TorchSigDataset, TorchSigDataset, FamilyMapper]:
+    """Load TorchSig data and create train/val/test dataset splits.
+
+    This helper encapsulates data loading, filtering, stratified splitting, and
+    TorchSigDataset construction so that both standard and contrastive loaders
+    can reuse the same logic.
 
     Args:
         cache_dir: Directory containing cached data
-        batch_size: Batch size for all loaders
-        train_transform: Transform for training data
-        eval_transform: Transform for validation and test data
         family_mapper: FamilyMapper instance (default: TorchSig mapper)
+        transform: Transform to apply to all splits (or None)
         crop_length: Length to crop signals to
         train_ratio: Fraction for training
         val_ratio: Fraction for validation
         test_ratio: Fraction for testing
-        num_workers: Number of data loading workers
         seed: Random seed for reproducibility
         generate_if_missing: Whether to generate data if not cached
         generation_config: Config for data generation if needed
-        device: Device where it will be loaded (to avoid issues with pin_memory)
 
     Returns:
-        Dict with "train", "val", "test" DataLoaders and "family_names" list
+        Tuple of (train_dataset, val_dataset, test_dataset, family_mapper)
     """
     cache_dir = Path(cache_dir)
     family_mapper = family_mapper or get_default_torchsig_mapper()
@@ -553,7 +549,7 @@ def get_torchsig_loaders(
         labels[idx_train],
         snrs[idx_train],
         family_mapper=family_mapper,
-        transform=train_transform,
+        transform=transform,
         crop_length=crop_length,
         seed=seed,
     )
@@ -562,7 +558,7 @@ def get_torchsig_loaders(
         labels[idx_val],
         snrs[idx_val],
         family_mapper=family_mapper,
-        transform=eval_transform,
+        transform=transform,
         crop_length=crop_length,
         seed=seed + 1,
     )
@@ -571,10 +567,70 @@ def get_torchsig_loaders(
         labels[idx_test],
         snrs[idx_test],
         family_mapper=family_mapper,
-        transform=eval_transform,
+        transform=transform,
         crop_length=crop_length,
         seed=seed + 2,
     )
+
+    return train_dataset, val_dataset, test_dataset, family_mapper
+
+
+def get_torchsig_loaders(
+    cache_dir: str | Path,
+    batch_size: int = 256,
+    train_transform: Optional[Callable] = None,
+    eval_transform: Optional[Callable] = None,
+    family_mapper: Optional[FamilyMapper] = None,
+    crop_length: int = 128,
+    train_ratio: float = 0.6,
+    val_ratio: float = 0.2,
+    test_ratio: float = 0.2,
+    num_workers: int = 4,
+    seed: int = 42,
+    generate_if_missing: bool = True,
+    generation_config: Optional[dict] = None,
+    device: str = "cpu"
+) -> dict[str, Any]:
+    """Create DataLoaders for TorchSig dataset.
+
+    Args:
+        cache_dir: Directory containing cached data
+        batch_size: Batch size for all loaders
+        train_transform: Transform for training data
+        eval_transform: Transform for validation and test data
+        family_mapper: FamilyMapper instance (default: TorchSig mapper)
+        crop_length: Length to crop signals to
+        train_ratio: Fraction for training
+        val_ratio: Fraction for validation
+        test_ratio: Fraction for testing
+        num_workers: Number of data loading workers
+        seed: Random seed for reproducibility
+        generate_if_missing: Whether to generate data if not cached
+        generation_config: Config for data generation if needed
+        device: Device where it will be loaded (to avoid issues with pin_memory)
+
+    Returns:
+        Dict with "train", "val", "test" DataLoaders and "family_names" list
+    """
+    # Load and split into datasets (with train_transform=None initially,
+    # we'll set transforms after)
+    train_dataset, val_dataset, test_dataset, family_mapper = _load_and_split_torchsig(
+        cache_dir=cache_dir,
+        family_mapper=family_mapper,
+        transform=None,
+        crop_length=crop_length,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        test_ratio=test_ratio,
+        seed=seed,
+        generate_if_missing=generate_if_missing,
+        generation_config=generation_config,
+    )
+
+    # Apply transforms
+    train_dataset.transform = train_transform
+    val_dataset.transform = eval_transform
+    test_dataset.transform = eval_transform
 
     # Warning suppression: on mps (MacOS) pin_memory must be set to False
     pin_memory = False if device == "mps" else True
