@@ -19,7 +19,9 @@ FSK:
   - 4fsk
   - 8fsk
   - 16fsk
+  - 2gfsk
   - gfsk
+  - 2msk
   - gmsk
   - msk
 

@@ -513,7 +513,10 @@ def _load_and_split_torchsig(
 
     # Get family indices for stratification
     family_indices = np.array(
-        [family_mapper.get_family_idx(str(lbl)) or -1 for lbl in labels]
+        [
+            idx if (idx := family_mapper.get_family_idx(str(lbl))) is not None else -1
+            for lbl in labels
+        ]
     )
     valid_mask = family_indices >= 0
     data = data[valid_mask]
