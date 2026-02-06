@@ -13,6 +13,9 @@ Example usage:
 
     # Train with augmentations
     uv run python scripts/train_pfcnn.py --augment
+
+    # Train with W&B tracking
+    uv run python scripts/train_pfcnn.py --wandb
 """
 
 import argparse
@@ -36,7 +39,7 @@ from robust_amc.evaluation import (
     plot_confusion_matrix,
 )
 from robust_amc.models import create_pfcnn
-from robust_amc.training import Trainer, TrainingConfig
+from robust_amc.training import Trainer, TrainingConfig, WandbLogger
 from robust_amc.utils.device import SELECTED_DEVICE, get_device
 from robust_amc.utils.reproducibility import set_seed
 
@@ -93,6 +96,25 @@ def parse_args():
         type=str,
         default="results",
         help="Directory for results",
+    )
+
+    # Weights & Biases
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Enable Weights & Biases experiment tracking",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="robust-amc",
+        help="W&B project name",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        type=str,
+        default=None,
+        help="W&B run name (auto-generated if not set)",
     )
 
     # Misc
@@ -176,9 +198,36 @@ def main():
     trainer = Trainer(model, training_config)
     print(f"\nTraining on device: {trainer.device}")
 
+    # Set up W&B logger
+    wandb_logger = None
+    if args.wandb:
+        run_name = args.wandb_run_name or f"pfcnn-{args.variant}" + ("-mda" if args.augment else "")
+        wandb_logger = WandbLogger(
+            project=args.wandb_project,
+            run_name=run_name,
+            config={
+                "dataset_config": args.config,
+                "variant": args.variant,
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "lr": args.lr,
+                "weight_decay": args.weight_decay,
+                "augment": args.augment,
+                "patience": args.patience,
+                "seed": args.seed,
+                "num_families": num_families,
+                "family_names": family_names,
+                "train_samples": len(loaders["train"].dataset),
+                "val_samples": len(loaders["val"].dataset),
+                "test_samples": len(loaders["test"].dataset),
+            },
+        )
+        wandb_logger.log_model_summary("PF-CNN", num_params, architecture=args.variant)
+        print("W&B tracking enabled")
+
     # Train
     print("\nStarting training...")
-    history = trainer.fit(loaders["train"], loaders["val"])
+    history = trainer.fit(loaders["train"], loaders["val"], wandb_logger=wandb_logger)
 
     print(f"\nTraining complete!")
     print(f"Best validation accuracy: {history.best_val_acc:.4f} (epoch {history.best_epoch})")
@@ -200,6 +249,20 @@ def main():
     )
 
     print(f"Test accuracy: {test_results['accuracy']:.4f}")
+
+    # Log test results to W&B
+    if wandb_logger is not None:
+        wandb_logger.log_confusion_matrix(
+            test_results["targets"],
+            test_results["predictions"],
+            family_names,
+            title="Test Confusion Matrix",
+        )
+        snr_acc = test_results["snr_accuracy"]
+        if snr_acc:
+            snr_values = sorted(snr_acc.keys())
+            accuracies = [snr_acc[s] for s in snr_values]
+            wandb_logger.log_snr_accuracy(snr_values, accuracies, model_name="PF-CNN")
 
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -252,6 +315,14 @@ def main():
     fig_cm = plot_confusion_matrix(cm, family_names, title="Family Confusion Matrix")
     fig_cm.savefig(results_dir / f"confusion_matrix_{timestamp}.png", dpi=150)
     print(f"  Saved confusion matrix")
+
+    # Log plots to W&B and finish
+    if wandb_logger is not None:
+        snr_plot = str(results_dir / f"accuracy_vs_snr_{timestamp}.png")
+        cm_plot = str(results_dir / f"confusion_matrix_{timestamp}.png")
+        wandb_logger.log_image("eval/accuracy_vs_snr", snr_plot)
+        wandb_logger.log_image("eval/confusion_matrix", cm_plot)
+        wandb_logger.finish()
 
     print("\nDone!")
 
