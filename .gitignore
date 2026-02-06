@@ -18,11 +18,10 @@ data/*.hdf5
 data/*npy
 data/radioml2018_preprocessed
 data/panoradio
-data/torchsig
+data/torchsig*
 
 # Model checkpoints
-checkpoints/*.pt
-checkpoints/*.pth
+checkpoints/*
 
 # Results and figures (regenerable)
 results/*.png

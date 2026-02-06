@@ -47,7 +47,7 @@ def evaluate_family_model(
 
     with torch.no_grad():
         for batch in data_loader:
-            x, y, snr = batch
+            x, y, meta = batch
             x = x.to(device)
 
             logits = model(x)
@@ -55,7 +55,16 @@ def evaluate_family_model(
 
             all_preds.extend(preds)
             all_targets.extend(y.numpy())
-            all_snrs.extend(snr.numpy())
+
+            # Handle both dict and tensor formats for SNR
+            if isinstance(meta, dict):
+                snr = meta.get("snr", torch.zeros(len(y)))
+            else:
+                snr = meta
+            if isinstance(snr, torch.Tensor):
+                all_snrs.extend(snr.numpy())
+            else:
+                all_snrs.extend(snr)
 
     predictions = np.array(all_preds)
     targets = np.array(all_targets)

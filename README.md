@@ -23,7 +23,7 @@ uv sync
 
 This project uses two datasets:
 
-**TorchSig (Synthetic)** - Generated automatically on first use
+**TorchSig (Synthetic)** - Generated automatically or manually
 - 5 modulation families: PSK, FSK, AM, SSB, QAM
 - Configurable SNR range and impairment levels
 - No manual download required
@@ -35,6 +35,56 @@ This project uses two datasets:
 #   - rscd_2048.npy (5 GB)
 #   - tags.csv
 ```
+
+### Generating TorchSig Data
+
+TorchSig data can be generated in two ways:
+
+**Option 1: Use the standalone TorchSig generator (recommended)**
+
+A separate generator tool with its own NumPy 1.x environment is available in `../torchsig-generator/`:
+
+```bash
+# Setup the generator (one-time)
+cd ../torchsig-generator
+uv sync
+
+# Generate training data
+uv run python generate.py -o ../modulation-classification/data/torchsig_train -c train
+
+# Generate OOD test data
+uv run python generate.py -o ../modulation-classification/data/torchsig_ood -c ood
+
+# List available modulations
+uv run python generate.py --list-modulations
+```
+
+**Option 2: Use the built-in fallback generator**
+
+If TorchSig is not available, a fallback generator creates simple synthetic signals:
+
+```bash
+# Generate using the training script (fallback will be used automatically)
+uv run python scripts/train_pfcnn.py --epochs 0 --num-workers 0
+
+# Or generate programmatically:
+uv run python -c "
+from robust_amc.data import generate_torchsig_data
+generate_torchsig_data(
+    'data/torchsig_train',
+    num_samples_per_class=10000,
+    signal_length=1024,
+    seed=42
+)
+"
+```
+
+**Generation options**:
+- `num_samples_per_class`: Number of samples per modulation (default: 5000)
+- `signal_length`: Raw signal length in samples (default: 1024, cropped to 128 for training)
+- `snr_db_min/max`: SNR range in dB (TorchSig 2.0 requires >= 0)
+
+**Note**: TorchSig 2.0 requires NumPy < 2.0 due to OpenCV dependency. The standalone generator handles this by using a separate virtual environment.
 
 ### Verify Installation
 
@@ -124,12 +174,14 @@ uv run black src tests
 uv run ruff check src tests
 ```
 
-## Optional: TorchSig Library
+## Troubleshooting
 
-For full TorchSig functionality (advanced signal generation), install from GitHub:
-
+**Multiprocessing errors on macOS**: Use `--num-workers 0` when running training scripts:
 ```bash
-pip install git+https://github.com/TorchDSP/torchsig.git
+uv run python scripts/train_pfcnn.py --num-workers 0
 ```
 
-Without TorchSig, fallback signal generation is used (sufficient for demonstration).
+**NumPy 2.x compatibility**: TorchSig and OpenCV may have issues with NumPy 2.x. The fallback signal generator works automatically. For full TorchSig support, downgrade NumPy:
+```bash
+pip install "numpy<2"
+```

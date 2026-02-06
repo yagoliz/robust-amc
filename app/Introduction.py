@@ -35,6 +35,8 @@ Navigate using the sidebar to explore:
 2. **Impairment Simulator** - See how hardware impairments affect signals in real-time
 3. **Model Evaluation** - Test the classifier on clean and impaired signals
 4. **Domain Shift Demo** - Observe accuracy collapse under various conditions
+5. **Augmentation Demo** - Visualize MDA-DMC data augmentation effects
+6. **Model Comparison** - Compare baseline vs augmented model performance
 
 ---
 

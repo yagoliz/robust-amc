@@ -69,17 +69,18 @@ OOD_IMPAIRMENT_CONFIG = ImpairmentConfig(
 )
 
 
-# Default modulations to generate (maps to TorchSig class names)
+# Default modulations to generate (maps to TorchSig 2.0 class names)
+# See torchsig.signals.signal_lists.CLASS_FAMILY_DICT for all available
 DEFAULT_MODULATIONS = [
     # PSK family
     "bpsk",
     "qpsk",
     "8psk",
-    # FSK family
+    # FSK family (TorchSig 2.0 uses number prefix: 2fsk, 2gfsk, 2msk, etc.)
     "2fsk",
     "4fsk",
-    "gfsk",
-    "msk",
+    "2gfsk",
+    "2msk",
     # AM family
     "am-dsb",
     "am-dsb-sc",
@@ -91,6 +92,18 @@ DEFAULT_MODULATIONS = [
     "64qam",
     "256qam",
 ]
+
+
+def family_collate_fn(batch):
+    """Collate function for family-mapped datasets.
+
+    Extracts signals, family labels, and SNR metadata from batch.
+    This is a module-level function to allow multiprocessing pickling.
+    """
+    x = torch.stack([item[0] for item in batch])
+    y = torch.tensor([item[1] for item in batch], dtype=torch.long)
+    meta = {"snr": torch.tensor([item[2]["snr"] for item in batch], dtype=torch.float32)}
+    return x, y, meta
 
 
 class TorchSigDataset(Dataset):
@@ -217,15 +230,15 @@ def generate_torchsig_data(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate TorchSig synthetic signal data.
 
-    This function generates signals using TorchSig if available, otherwise
+    This function generates signals using TorchSig 2.0 if available, otherwise
     falls back to simple synthetic generation for testing.
 
     Args:
         output_dir: Directory to save generated data
-        modulations: List of modulation types to generate
+        modulations: List of modulation types to generate (TorchSig 2.0 class names)
         num_samples_per_class: Number of samples per modulation class
         signal_length: Length of each signal in samples
-        impairment_config: Impairment configuration
+        impairment_config: Impairment configuration (SNR range used)
         seed: Random seed for reproducibility
 
     Returns:
@@ -237,17 +250,23 @@ def generate_torchsig_data(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     modulations = modulations or DEFAULT_MODULATIONS
-    config = impairment_config or TRAIN_IMPAIRMENT_CONFIG
+
+    # Handle impairment_config - can be dict from YAML or ImpairmentConfig
+    if impairment_config is None:
+        config = TRAIN_IMPAIRMENT_CONFIG
+    elif isinstance(impairment_config, dict):
+        config = ImpairmentConfig(**impairment_config)
+    else:
+        config = impairment_config
+
     rng = np.random.default_rng(seed)
 
     try:
-        # Try to use TorchSig
-        from torchsig.datasets.modulations import ModulationsDataset
-        from torchsig.transforms.target_transforms import DescToClassIndex
+        # Try to use TorchSig 2.0 API
+        from torchsig.datasets import DatasetMetadata, TorchSigIterableDataset
 
-        print("Using TorchSig for signal generation...")
+        print("Using TorchSig 2.0 for signal generation...")
 
-        # TorchSig generation
         all_data = []
         all_labels = []
         all_snrs = []
@@ -255,34 +274,55 @@ def generate_torchsig_data(
         for mod in modulations:
             print(f"  Generating {num_samples_per_class} samples of {mod}...")
 
-            # Generate SNRs uniformly in range
-            snrs = rng.uniform(
-                config.snr_db_min, config.snr_db_max, size=num_samples_per_class
+            # Create metadata for this modulation class
+            # TorchSig 2.0 uses DatasetMetadata + TorchSigIterableDataset
+            metadata = DatasetMetadata(
+                num_iq_samples_dataset=signal_length,
+                fft_size=min(128, signal_length),  # FFT size for spectrogram (required)
+                class_list=[mod],
+                snr_db_min=config.snr_db_min,
+                snr_db_max=config.snr_db_max,
+                num_signals_min=1,
+                num_signals_max=1,  # Single signal per sample
             )
 
-            # Use TorchSig to generate signals
-            dataset = ModulationsDataset(
-                classes=[mod],
-                use_class_idx=False,
-                level=config.level,
-                num_iq_samples=signal_length,
-                num_samples=num_samples_per_class,
-                include_snr=True,
+            # Create iterable dataset
+            dataset = TorchSigIterableDataset(
+                dataset_metadata=metadata,
+                target_labels=["class_name", "snr"],
+                seed=seed,
             )
 
-            for i, (signal, label, snr_val) in enumerate(dataset):
-                if isinstance(signal, torch.Tensor):
-                    signal = signal.numpy()
-                all_data.append(signal)
+            # Generate samples
+            count = 0
+            for sample in dataset:
+                if count >= num_samples_per_class:
+                    break
+
+                # TorchSigIterableDataset returns (data, targets) when target_labels specified
+                signal_data, targets = sample
+                class_name, snr = targets
+
+                # Signal data is complex64 numpy array
+                if isinstance(signal_data, torch.Tensor):
+                    signal_data = signal_data.numpy()
+
+                all_data.append(signal_data.astype(np.complex64))
                 all_labels.append(mod)
-                all_snrs.append(snrs[i])
+                all_snrs.append(float(snr))
+                count += 1
 
         data = np.stack(all_data)
         labels = np.array(all_labels)
         snrs = np.array(all_snrs)
 
-    except ImportError:
-        print("TorchSig not available, using fallback synthetic generation...")
+    except ImportError as e:
+        print(f"TorchSig not installed ({e}), using fallback synthetic generation...")
+        data, labels, snrs = _generate_fallback_data(
+            modulations, num_samples_per_class, signal_length, config, rng
+        )
+    except Exception as e:
+        print(f"TorchSig error ({type(e).__name__}: {e}), using fallback synthetic generation...")
         data, labels, snrs = _generate_fallback_data(
             modulations, num_samples_per_class, signal_length, config, rng
         )
@@ -292,7 +332,7 @@ def generate_torchsig_data(
     np.save(output_dir / "labels.npy", labels)
     np.save(output_dir / "snrs.npy", snrs)
 
-    metadata = {
+    metadata_dict = {
         "modulations": modulations,
         "num_samples_per_class": num_samples_per_class,
         "signal_length": signal_length,
@@ -305,7 +345,7 @@ def generate_torchsig_data(
         "total_samples": len(labels),
     }
     with open(output_dir / "metadata.json", "w") as f:
-        json.dump(metadata, f, indent=2)
+        json.dump(metadata_dict, f, indent=2)
 
     print(f"Generated {len(labels)} samples, saved to {output_dir}")
     return data, labels, snrs
@@ -533,13 +573,6 @@ def get_torchsig_loaders(
         crop_length=crop_length,
         seed=seed + 2,
     )
-
-    # Create collate function for compatibility with existing trainers
-    def family_collate_fn(batch):
-        x = torch.stack([item[0] for item in batch])
-        y = torch.tensor([item[1] for item in batch], dtype=torch.long)
-        snr = torch.tensor([item[2]["snr"] for item in batch], dtype=torch.float32)
-        return x, y, snr
 
     # Create loaders
     loaders = {

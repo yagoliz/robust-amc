@@ -182,7 +182,11 @@ def main():
     # Load best model for evaluation
     best_model_path = checkpoint_dir / "best_model.pt"
     if best_model_path.exists():
-        model.load_state_dict(torch.load(best_model_path, weights_only=True))
+        checkpoint = torch.load(best_model_path, map_location="cpu", weights_only=False)
+        if "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            model.load_state_dict(checkpoint)
         print(f"Loaded best model from {best_model_path}")
 
     # Evaluate on test set
