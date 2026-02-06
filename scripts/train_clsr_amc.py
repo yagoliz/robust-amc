@@ -216,8 +216,9 @@ def main():
     print(f"Test: {len(loaders['test'].dataset)} samples")
 
     # Create model
-    print(f"\nCreating CLSR-AMC ({args.variant}) with {num_families} output classes")
-    model = create_clsr_amc(num_classes=num_families, variant=args.variant)
+    seq_len = extra.get("crop_length", 128)
+    print(f"\nCreating CLSR-AMC ({args.variant}) with {num_families} output classes, seq_len={seq_len}")
+    model = create_clsr_amc(num_classes=num_families, variant=args.variant, seq_len=seq_len)
 
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {num_params:,}")

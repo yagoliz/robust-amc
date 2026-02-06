@@ -361,12 +361,14 @@ class CLSRAMCLoss(nn.Module):
 def create_clsr_amc(
     num_classes: int = 11,
     variant: str = "default",
+    seq_len: int = 128,
 ) -> CLSRAMC:
     """Factory function to create CLSR-AMC variants.
 
     Args:
         num_classes: Number of output classes.
         variant: Model variant ('default', 'small', 'large').
+        seq_len: Input sequence length (must match data crop_length).
 
     Returns:
         CLSRAMC model instance.
@@ -401,4 +403,4 @@ def create_clsr_amc(
     if variant not in configs:
         raise ValueError(f"Unknown variant: {variant}. Choose from {list(configs.keys())}")
 
-    return CLSRAMC(num_classes=num_classes, **configs[variant])
+    return CLSRAMC(num_classes=num_classes, seq_len=seq_len, **configs[variant])
