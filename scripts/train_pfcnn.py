@@ -324,8 +324,12 @@ def main():
     print("\nGenerating plots...")
 
     # Accuracy vs SNR
-    fig_snr = plot_accuracy_vs_snr(test_results["snr_accuracy"])
-    fig_snr.savefig(results_dir / f"{run_name}_accuracy_vs_snr_{timestamp}.png", dpi=150)
+    snr_acc = test_results["snr_accuracy"]
+    if snr_acc:
+        snr_vals = sorted(snr_acc.keys())
+        accs = [snr_acc[s] for s in snr_vals]
+        ax_snr = plot_accuracy_vs_snr(snr_vals, {"PF-CNN": accs})
+        ax_snr.figure.savefig(results_dir / f"{run_name}_accuracy_vs_snr_{timestamp}.png", dpi=150)
     print(f"  Saved accuracy vs SNR plot")
 
     # Confusion matrix
@@ -335,9 +339,9 @@ def main():
         test_results["targets"],
         num_families,
     )
-    fig_cm = plot_confusion_matrix(cm, family_names, title="Family Confusion Matrix")
-    fig_cm.savefig(results_dir / f"{run_name}_confusion_matrix_{timestamp}.png", dpi=150)
-    print(f"  Saved confusion matrix")
+    ax_cm = plot_confusion_matrix(cm, family_names, title="Family Confusion Matrix")
+    ax_cm.figure.savefig(results_dir / f"{run_name}_confusion_matrix_{timestamp}.png", dpi=150)
+    print("  Saved confusion matrix")
 
     # Log plots to W&B and finish
     if wandb_logger is not None:
