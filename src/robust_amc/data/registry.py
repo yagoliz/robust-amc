@@ -98,6 +98,7 @@ def get_loaders(
     config: DatasetConfig,
     train_transform: Optional[Callable] = None,
     eval_transform: Optional[Callable] = None,
+    device: str = "cpu"
 ) -> dict[str, Any]:
     """Get DataLoaders from a dataset configuration.
 
@@ -105,6 +106,7 @@ def get_loaders(
         config: Dataset configuration
         train_transform: Transform for training data
         eval_transform: Transform for evaluation data
+        device: Where the data will be loaded
 
     Returns:
         Dict with DataLoaders ("train", "val", "test") and metadata
@@ -134,6 +136,7 @@ def get_loaders(
             seed=config.seed,
             generate_if_missing=extra.get("generate_if_missing", True),
             generation_config=extra.get("generation_config"),
+            device=device
         )
 
     elif config.dataset_type == DatasetType.PANORADIO:
@@ -153,6 +156,7 @@ def get_loaders(
             seed=config.seed,
             snr_filter=extra.get("snr_filter"),
             include_unmapped=extra.get("include_unmapped", False),
+            device=device
         )
 
     else:

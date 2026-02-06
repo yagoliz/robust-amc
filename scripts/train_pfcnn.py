@@ -37,6 +37,7 @@ from robust_amc.evaluation import (
 )
 from robust_amc.models import create_pfcnn
 from robust_amc.training import Trainer, TrainingConfig
+from robust_amc.utils.device import SELECTED_DEVICE, get_device
 from robust_amc.utils.reproducibility import set_seed
 
 
@@ -138,9 +139,12 @@ def main():
     else:
         train_transform = eval_transform
 
+    # Set the device for the whole training
+    device = get_device(args.device)
+
     # Load data
     print(f"\nLoading data from {config.data_path}")
-    loaders = get_loaders(config, train_transform=train_transform, eval_transform=eval_transform)
+    loaders = get_loaders(config, train_transform=train_transform, eval_transform=eval_transform, device=device)
 
     family_names = loaders["family_names"]
     num_families = len(family_names)

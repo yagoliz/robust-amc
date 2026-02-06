@@ -38,3 +38,6 @@ def get_device(device: str = "auto") -> str:
 
     else:
         raise RuntimeError(f"Unsupported device: {device}")
+
+
+SELECTED_DEVICE = "cpu"

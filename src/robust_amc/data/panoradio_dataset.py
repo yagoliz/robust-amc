@@ -263,6 +263,7 @@ def get_panoradio_loaders(
     seed: int = 42,
     snr_filter: Optional[tuple[float, float]] = None,
     include_unmapped: bool = False,
+    device: str = "cpu"
 ) -> dict[str, Any]:
     """Create DataLoaders for Panoradio dataset.
 
@@ -282,6 +283,7 @@ def get_panoradio_loaders(
         seed: Random seed for reproducibility
         snr_filter: Optional (min, max) SNR filter
         include_unmapped: Whether to include samples that don't map to families
+        device: Device where it will be loaded (to avoid issues with pin_memory)
 
     Returns:
         Dict with DataLoaders and "family_names" list.
@@ -327,6 +329,9 @@ def get_panoradio_loaders(
 
     loaders: dict[str, Any] = {"family_names": family_mapper.family_names}
 
+    # Warning suppression: We need to set pin_memory to false on MPS
+    pin_memory = False if device == "mps" else True
+
     if train_ratio > 0:
         # Three-way split with training
         assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6
@@ -364,7 +369,7 @@ def get_panoradio_loaders(
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
-            pin_memory=True,
+            pin_memory=pin_memory,
             drop_last=True,
             collate_fn=family_collate_fn,
         )
@@ -405,7 +410,7 @@ def get_panoradio_loaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         collate_fn=family_collate_fn,
     )
 
@@ -414,7 +419,7 @@ def get_panoradio_loaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         collate_fn=family_collate_fn,
     )
 

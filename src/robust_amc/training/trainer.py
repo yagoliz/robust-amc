@@ -11,6 +11,8 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from robust_amc.utils import get_device
+
 
 @dataclass
 class TrainingConfig:
@@ -28,13 +30,7 @@ class TrainingConfig:
     seed: Optional[int] = None
 
     def __post_init__(self):
-        if self.device == "auto":
-            if torch.cuda.is_available():
-                self.device = "cuda"
-            elif torch.backends.mps.is_available():
-                self.device = "mps"
-            else:
-                self.device = "cpu"
+        self.device = get_device(self.device)
 
 
 @dataclass
@@ -315,13 +311,7 @@ def load_model(
     Returns:
         Model with loaded weights
     """
-    if device == "auto":
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
+    device = get_device(device)
 
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])

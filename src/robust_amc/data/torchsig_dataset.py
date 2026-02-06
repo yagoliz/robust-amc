@@ -11,7 +11,7 @@ with support for:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -472,6 +472,7 @@ def get_torchsig_loaders(
     seed: int = 42,
     generate_if_missing: bool = True,
     generation_config: Optional[dict] = None,
+    device: str = "cpu"
 ) -> dict[str, Any]:
     """Create DataLoaders for TorchSig dataset.
 
@@ -489,6 +490,7 @@ def get_torchsig_loaders(
         seed: Random seed for reproducibility
         generate_if_missing: Whether to generate data if not cached
         generation_config: Config for data generation if needed
+        device: Device where it will be loaded (to avoid issues with pin_memory)
 
     Returns:
         Dict with "train", "val", "test" DataLoaders and "family_names" list
@@ -574,6 +576,9 @@ def get_torchsig_loaders(
         seed=seed + 2,
     )
 
+    # Warning suppression: on mps (MacOS) pin_memory must be set to False
+    pin_memory = False if device == "mps" else True
+
     # Create loaders
     loaders = {
         "train": DataLoader(
@@ -581,7 +586,7 @@ def get_torchsig_loaders(
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
-            pin_memory=True,
+            pin_memory=pin_memory,
             drop_last=True,
             collate_fn=family_collate_fn,
         ),
@@ -590,7 +595,7 @@ def get_torchsig_loaders(
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            pin_memory=True,
+            pin_memory=pin_memory,
             collate_fn=family_collate_fn,
         ),
         "test": DataLoader(
@@ -598,7 +603,7 @@ def get_torchsig_loaders(
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            pin_memory=True,
+            pin_memory=pin_memory,
             collate_fn=family_collate_fn,
         ),
         "family_names": family_mapper.family_names,
