@@ -276,6 +276,9 @@ def generate_torchsig_data(
 
             # Create metadata for this modulation class
             # TorchSig 2.0 uses DatasetMetadata + TorchSigIterableDataset
+            # Set signal duration to fill the entire trace (default is only 10-20%)
+            sample_rate = 10e6  # TorchSig default
+            full_duration = signal_length / sample_rate
             metadata = DatasetMetadata(
                 num_iq_samples_dataset=signal_length,
                 fft_size=min(128, signal_length),  # FFT size for spectrogram (required)
@@ -284,6 +287,8 @@ def generate_torchsig_data(
                 snr_db_max=config.snr_db_max,
                 num_signals_min=1,
                 num_signals_max=1,  # Single signal per sample
+                signal_duration_min=full_duration,
+                signal_duration_max=full_duration,
             )
 
             # Create iterable dataset
