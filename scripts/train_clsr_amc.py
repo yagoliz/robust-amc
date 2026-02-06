@@ -99,10 +99,16 @@ def parse_args():
 
     # Output
     parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Run name for checkpoints/results (auto-generated from args if not set)",
+    )
+    parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default="checkpoints/clsr_amc_torchsig",
-        help="Directory for checkpoints",
+        default=None,
+        help="Directory for checkpoints (default: checkpoints/<run-name>)",
     )
     parser.add_argument(
         "--results-dir",
@@ -138,18 +144,37 @@ def parse_args():
     return parser.parse_args()
 
 
+def build_run_name(args) -> str:
+    """Build a descriptive run name from training arguments."""
+    parts = [f"clsr_amc-{args.variant}"]
+    if args.classification_weight == 0:
+        parts.append("pretrain")
+    if args.lr != 1e-3:
+        parts.append(f"lr{args.lr}")
+    if args.batch_size != 256:
+        parts.append(f"bs{args.batch_size}")
+    if args.temperature != 0.5:
+        parts.append(f"t{args.temperature}")
+    return "_".join(parts)
+
+
 def main():
     args = parse_args()
 
     set_seed(args.seed)
 
-    checkpoint_dir = Path(args.checkpoint_dir)
+    # Build run name
+    run_name = args.run_name or build_run_name(args)
+
+    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else Path("checkpoints") / run_name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     results_dir = Path(args.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
     print("CLSR-AMC Training on TorchSig")
+    print(f"Run: {run_name}")
+    print(f"Checkpoints: {checkpoint_dir}")
     print("=" * 60)
 
     # Load dataset config
@@ -223,10 +248,10 @@ def main():
     # Set up W&B logger
     wandb_logger = None
     if args.wandb:
-        run_name = args.wandb_run_name or f"clsr-amc-{args.variant}"
+        run_name_wb = args.wandb_run_name or run_name
         wandb_logger = WandbLogger(
             project=args.wandb_project,
-            run_name=run_name,
+            run_name=run_name_wb,
             config={
                 "model": "CLSR-AMC",
                 "dataset_config": args.config,
@@ -328,7 +353,7 @@ def main():
         },
     }
 
-    results_path = results_dir / f"clsr_amc_torchsig_{timestamp}.json"
+    results_path = results_dir / f"{run_name}_{timestamp}.json"
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults saved to {results_path}")
@@ -341,7 +366,7 @@ def main():
         snr_vals = sorted(snr_acc.keys())
         accs = [snr_acc[s] for s in snr_vals]
         ax_snr = plot_accuracy_vs_snr(snr_vals, {"CLSR-AMC": accs})
-        ax_snr.figure.savefig(results_dir / f"clsr_amc_accuracy_vs_snr_{timestamp}.png", dpi=150)
+        ax_snr.figure.savefig(results_dir / f"{run_name}_accuracy_vs_snr_{timestamp}.png", dpi=150)
         print("  Saved accuracy vs SNR plot")
 
     cm = compute_family_confusion_matrix(
@@ -350,15 +375,15 @@ def main():
         num_families,
     )
     ax_cm = plot_confusion_matrix(cm, family_names, title="CLSR-AMC Family Confusion Matrix")
-    ax_cm.figure.savefig(results_dir / f"clsr_amc_confusion_matrix_{timestamp}.png", dpi=150)
+    ax_cm.figure.savefig(results_dir / f"{run_name}_confusion_matrix_{timestamp}.png", dpi=150)
     print("  Saved confusion matrix")
 
     # Log plots to W&B and finish
     if wandb_logger is not None:
         wandb_logger.log_image("eval/accuracy_vs_snr",
-                               str(results_dir / f"clsr_amc_accuracy_vs_snr_{timestamp}.png"))
+                               str(results_dir / f"{run_name}_accuracy_vs_snr_{timestamp}.png"))
         wandb_logger.log_image("eval/confusion_matrix",
-                               str(results_dir / f"clsr_amc_confusion_matrix_{timestamp}.png"))
+                               str(results_dir / f"{run_name}_confusion_matrix_{timestamp}.png"))
         wandb_logger.finish()
 
     print("\nDone!")

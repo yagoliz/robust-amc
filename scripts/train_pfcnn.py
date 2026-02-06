@@ -86,10 +86,16 @@ def parse_args():
 
     # Output
     parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Run name for checkpoints/results (auto-generated from args if not set)",
+    )
+    parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default="checkpoints/pfcnn_torchsig",
-        help="Directory for checkpoints",
+        default=None,
+        help="Directory for checkpoints (default: checkpoints/<run-name>)",
     )
     parser.add_argument(
         "--results-dir",
@@ -125,20 +131,37 @@ def parse_args():
     return parser.parse_args()
 
 
+def build_run_name(args) -> str:
+    """Build a descriptive run name from training arguments."""
+    parts = [f"pfcnn-{args.variant}"]
+    if args.augment:
+        parts.append("mda")
+    if args.lr != 1e-3:
+        parts.append(f"lr{args.lr}")
+    if args.batch_size != 256:
+        parts.append(f"bs{args.batch_size}")
+    return "_".join(parts)
+
+
 def main():
     args = parse_args()
 
     # Set seed for reproducibility
     set_seed(args.seed)
 
+    # Build run name
+    run_name = args.run_name or build_run_name(args)
+
     # Create output directories
-    checkpoint_dir = Path(args.checkpoint_dir)
+    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else Path("checkpoints") / run_name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     results_dir = Path(args.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
     print("PF-CNN Training on TorchSig")
+    print(f"Run: {run_name}")
+    print(f"Checkpoints: {checkpoint_dir}")
     print("=" * 60)
 
     # Load dataset config
@@ -201,10 +224,10 @@ def main():
     # Set up W&B logger
     wandb_logger = None
     if args.wandb:
-        run_name = args.wandb_run_name or f"pfcnn-{args.variant}" + ("-mda" if args.augment else "")
+        run_name_wb = args.wandb_run_name or run_name
         wandb_logger = WandbLogger(
             project=args.wandb_project,
-            run_name=run_name,
+            run_name=run_name_wb,
             config={
                 "dataset_config": args.config,
                 "variant": args.variant,
@@ -292,7 +315,7 @@ def main():
         },
     }
 
-    results_path = results_dir / f"pfcnn_torchsig_{timestamp}.json"
+    results_path = results_dir / f"{run_name}_{timestamp}.json"
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults saved to {results_path}")
@@ -302,7 +325,7 @@ def main():
 
     # Accuracy vs SNR
     fig_snr = plot_accuracy_vs_snr(test_results["snr_accuracy"])
-    fig_snr.savefig(results_dir / f"accuracy_vs_snr_{timestamp}.png", dpi=150)
+    fig_snr.savefig(results_dir / f"{run_name}_accuracy_vs_snr_{timestamp}.png", dpi=150)
     print(f"  Saved accuracy vs SNR plot")
 
     # Confusion matrix
@@ -313,13 +336,13 @@ def main():
         num_families,
     )
     fig_cm = plot_confusion_matrix(cm, family_names, title="Family Confusion Matrix")
-    fig_cm.savefig(results_dir / f"confusion_matrix_{timestamp}.png", dpi=150)
+    fig_cm.savefig(results_dir / f"{run_name}_confusion_matrix_{timestamp}.png", dpi=150)
     print(f"  Saved confusion matrix")
 
     # Log plots to W&B and finish
     if wandb_logger is not None:
-        snr_plot = str(results_dir / f"accuracy_vs_snr_{timestamp}.png")
-        cm_plot = str(results_dir / f"confusion_matrix_{timestamp}.png")
+        snr_plot = str(results_dir / f"{run_name}_accuracy_vs_snr_{timestamp}.png")
+        cm_plot = str(results_dir / f"{run_name}_confusion_matrix_{timestamp}.png")
         wandb_logger.log_image("eval/accuracy_vs_snr", snr_plot)
         wandb_logger.log_image("eval/confusion_matrix", cm_plot)
         wandb_logger.finish()
