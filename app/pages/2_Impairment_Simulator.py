@@ -70,7 +70,14 @@ family = st.sidebar.selectbox("Modulation Family", family_names)
 family_idx = family_names.index(family)
 
 snr_list = sorted(set(int(s) for s in test_snrs))
-snr = st.sidebar.select_slider("SNR (dB)", options=snr_list, value=10 if 10 in snr_list else snr_list[len(snr_list)//2])
+if not snr_list:
+    st.error("No SNR values found in the dataset.")
+    st.stop()
+snr = st.sidebar.select_slider(
+    "SNR (dB)",
+    options=snr_list,
+    value=10 if 10 in snr_list else snr_list[len(snr_list) // 2],
+)
 
 # Sidebar - Impairments
 st.sidebar.header("Impairments")
@@ -88,14 +95,25 @@ k_factor = 1.0
 if fading_type == "rician":
     k_factor = st.sidebar.slider("Rician K-factor", 0.0, 20.0, 5.0, 0.5)
 
-# Get sample
-samples = get_samples_for_family(test_data, test_labels, test_snrs, family_idx, snr, 1)
+# Get sample — keep it stable across impairment slider changes
+sample_key = (family_idx, snr)
+if "imp_sample_key" not in st.session_state or st.session_state["imp_sample_key"] != sample_key:
+    samples = get_samples_for_family(test_data, test_labels, test_snrs, family_idx, snr, 1)
+    if samples is None:
+        st.warning(f"No samples found for {family} at {snr} dB")
+        st.stop()
+    st.session_state["imp_sample_key"] = sample_key
+    st.session_state["imp_signal"] = samples[0]
 
-if samples is None:
-    st.warning(f"No samples found for {family} at {snr} dB")
-    st.stop()
+signal = st.session_state["imp_signal"]
 
-signal = samples[0]
+# Button to resample
+if st.sidebar.button("New Sample"):
+    samples = get_samples_for_family(test_data, test_labels, test_snrs, family_idx, snr, 1)
+    if samples is not None:
+        st.session_state["imp_signal"] = samples[0]
+        signal = samples[0]
+        st.rerun()
 
 # Apply impairments
 impaired_signal = apply_impairments(
@@ -139,7 +157,10 @@ with col1:
     if model is not None:
         pred, probs = predict_family(model, signal, family_names)
         if pred:
-            st.metric("Prediction (Clean)", pred, delta=None)
+            correct = pred == family
+            st.metric("Prediction (Impaired)", pred,
+                     delta="Correct" if correct else "Wrong",
+                     delta_color="normal" if correct else "inverse")
 
 with col2:
     st.subheader("Impaired Signal")

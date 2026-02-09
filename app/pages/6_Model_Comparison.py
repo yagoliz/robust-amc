@@ -95,6 +95,10 @@ else:
     test_data, test_labels, test_snrs = dataset["val"]
 
 # Evaluation settings
+if len(test_data) < 50:
+    st.error("Not enough test samples (need at least 50).")
+    st.stop()
+
 st.sidebar.header("Evaluation Settings")
 n_samples = st.sidebar.slider(
     "Samples per condition",
@@ -119,9 +123,9 @@ IMPAIRMENT_LEVELS = {
 
 
 @st.cache_data
-def evaluate_model_condition(_model, _test_data, _test_labels, _family_names, _n_samples, _impairments):
+def evaluate_model_condition(_model, model_name, _test_data, _test_labels, _family_names, n_samples, condition_name, impairments):
     """Evaluate a model under specific impairment conditions."""
-    indices = np.random.choice(len(_test_data), size=_n_samples, replace=False)
+    indices = np.random.choice(len(_test_data), size=n_samples, replace=False)
 
     predictions = []
     ground_truth = []
@@ -135,8 +139,8 @@ def evaluate_model_condition(_model, _test_data, _test_labels, _family_names, _n
             signal = np.stack([signal.real, signal.imag], axis=0).astype(np.float32)
 
         # Apply impairments
-        if any(v != 0 for v in _impairments.values()):
-            signal = apply_impairments(signal, **_impairments)
+        if any(v != 0 for v in impairments.values()):
+            signal = apply_impairments(signal, **impairments)
             signal = normalize_signal(signal)
 
         # Run prediction
@@ -176,7 +180,7 @@ if st.button("Run Comparison", type="primary"):
             with st.spinner(f"Evaluating {model_name} on {condition}..."):
                 impairments = IMPAIRMENT_LEVELS[condition]
                 acc, preds, gt = evaluate_model_condition(
-                    model, test_data, test_labels, family_names, n_samples, impairments
+                    model, model_name, test_data, test_labels, family_names, n_samples, condition, impairments
                 )
                 results[model_name][condition] = {
                     "accuracy": acc,

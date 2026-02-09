@@ -77,6 +77,9 @@ family_idx = family_names.index(family)
 
 # Find a good default SNR
 snr_list = sorted(set(int(s) for s in test_snrs))
+if not snr_list:
+    st.error("No SNR values found in the dataset.")
+    st.stop()
 default_snr = 10 if 10 in snr_list else snr_list[len(snr_list) // 2]
 
 snr = st.sidebar.select_slider(

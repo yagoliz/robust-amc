@@ -74,6 +74,10 @@ if "test" in dataset:
 else:
     test_data, test_labels, test_snrs = dataset["val"]
 
+if len(test_data) < 20:
+    st.error("Not enough test samples (need at least 20).")
+    st.stop()
+
 st.sidebar.header("Evaluation Settings")
 n_samples = st.sidebar.slider(
     "Samples per condition",
@@ -148,13 +152,13 @@ sweep_params = get_sweep_params(sweep_type)
 
 
 @st.cache_data
-def run_sweep_evaluation(_model, _test_data, _test_labels, _test_snrs, _family_names, _n_samples, _sweep_params):
+def run_sweep_evaluation(_model, model_name, _test_data, _test_labels, _test_snrs, _family_names, n_samples, _sweep_params, sweep_type):
     """Run evaluation across impairment sweep."""
     results = []
 
     for val_idx, val in enumerate(_sweep_params["values"]):
         # Sample data
-        indices = np.random.choice(len(_test_data), size=_n_samples, replace=False)
+        indices = np.random.choice(len(_test_data), size=n_samples, replace=False)
 
         correct = 0
         total = 0
@@ -222,12 +226,14 @@ if st.button("Run Domain Shift Analysis", type="primary"):
     with st.spinner("Running impairment sweep..."):
         results = run_sweep_evaluation(
             model,
+            selected_model,
             test_data,
             test_labels,
             test_snrs,
             family_names,
             n_samples,
             sweep_params,
+            sweep_type,
         )
     st.session_state["sweep_results"] = results
     st.session_state["sweep_params"] = sweep_params

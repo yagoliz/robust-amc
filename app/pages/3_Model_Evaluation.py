@@ -72,6 +72,10 @@ else:
     test_data, test_labels, test_snrs = dataset["val"]
 
 # Sidebar - Evaluation Settings
+if len(test_data) < 50:
+    st.error("Not enough test samples (need at least 50).")
+    st.stop()
+
 st.sidebar.header("Evaluation Settings")
 
 n_samples = st.sidebar.slider(
@@ -101,19 +105,20 @@ if apply_test_impairments:
 @st.cache_data
 def run_evaluation(
     _model,
+    model_name,
     _test_data,
     _test_labels,
     _test_snrs,
     _family_names,
-    _n_samples,
-    _cfo_hz,
-    _iq_amp,
-    _iq_phase,
-    _phase_noise,
-    _apply_impairments,
+    n_samples,
+    cfo_hz,
+    iq_amp,
+    iq_phase,
+    phase_noise,
+    apply_impairments_flag,
 ):
     """Run model evaluation on test data."""
-    indices = np.random.choice(len(_test_data), size=_n_samples, replace=False)
+    indices = np.random.choice(len(_test_data), size=n_samples, replace=False)
 
     predictions = []
     ground_truth = []
@@ -130,13 +135,13 @@ def run_evaluation(
             signal = np.stack([signal.real, signal.imag], axis=0).astype(np.float32)
 
         # Apply test-time impairments if enabled
-        if _apply_impairments and (_cfo_hz != 0 or _iq_amp > 0 or _iq_phase > 0 or _phase_noise > 0):
+        if apply_impairments_flag and (cfo_hz != 0 or iq_amp > 0 or iq_phase > 0 or phase_noise > 0):
             signal = apply_impairments(
                 signal,
-                cfo_hz=_cfo_hz,
-                iq_amp_db=_iq_amp,
-                iq_phase_deg=_iq_phase,
-                phase_noise_std=_phase_noise,
+                cfo_hz=cfo_hz,
+                iq_amp_db=iq_amp,
+                iq_phase_deg=iq_phase,
+                phase_noise_std=phase_noise,
             )
             signal = normalize_signal(signal)
 
@@ -157,6 +162,7 @@ if st.button("Run Evaluation", type="primary"):
     with st.spinner("Evaluating model..."):
         predictions, ground_truth, snrs, confidences = run_evaluation(
             model,
+            selected_model,
             test_data,
             test_labels,
             test_snrs,

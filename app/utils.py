@@ -13,17 +13,13 @@ import torch.nn as nn
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from robust_amc.data import (
-    Compose,
-    PowerNormalize,
-    FamilyMapper,
-    TorchSigDataset,
-    PanoradioDataset,
-    get_torchsig_loaders,
-    get_panoradio_loaders,
-    generate_torchsig_data,
-    load_torchsig_data,
-    load_panoradio_data,
     PANORADIO_SNR_LEVELS,
+    Compose,
+    FamilyMapper,
+    PowerNormalize,
+    generate_torchsig_data,
+    load_panoradio_data,
+    load_torchsig_data,
 )
 from robust_amc.data.channels import RayleighFading, RicianFading
 from robust_amc.data.impairments import (
@@ -48,9 +44,9 @@ SNR_LEVELS = list(range(-12, 22, 2))
 
 # Model checkpoint paths
 MODEL_CHECKPOINTS = {
-    "PF-CNN (TorchSig)": Path("checkpoints/pfcnn_torchsig/best_model.pt"),
-    "PF-CNN + Augment": Path("checkpoints/pfcnn_augmented/best_model.pt"),
-    "CLSR-AMC": Path("checkpoints/clsr_amc/best_model.pt"),
+    "PF-CNN (TorchSig)": Path("checkpoints/pfcnn-large/best_model.pt"),
+    "PF-CNN + Augment": Path("checkpoints/pfcnn-large-augment/best_model.pt"),
+    "CLSR-AMC": Path("checkpoints/clsr_amc-large/best_model.pt"),
 }
 
 # Number of classes for each model
@@ -58,6 +54,11 @@ MODEL_NUM_CLASSES = {
     "PF-CNN (TorchSig)": 5,
     "PF-CNN + Augment": 5,
     "CLSR-AMC": 5,
+}
+
+# Sequence length used during training (needed for CLSR-AMC decoder)
+MODEL_SEQ_LEN = {
+    "CLSR-AMC": 1024,
 }
 
 
@@ -99,10 +100,11 @@ def load_model_by_name(model_name: str) -> Optional[Union[PFCNN, CLSRAMC]]:
     num_classes = MODEL_NUM_CLASSES.get(model_name, 5)
 
     # Create appropriate model architecture
+    seq_len = MODEL_SEQ_LEN.get(model_name, 128)
     if "CLSR" in model_name:
-        model = create_clsr_amc(num_classes=num_classes, variant="default")
+        model = create_clsr_amc(num_classes=num_classes, variant="large", seq_len=seq_len)
     else:
-        model = create_pfcnn(num_classes=num_classes, variant="default")
+        model = create_pfcnn(num_classes=num_classes, variant="large")
 
     # Load weights
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -130,7 +132,7 @@ def load_model(checkpoint_path: Optional[Path] = None, num_classes: int = 5) -> 
         st.warning(f"Model checkpoint not found at {checkpoint_path}")
         return None
 
-    model = create_pfcnn(num_classes=num_classes, variant="default")
+    model = create_pfcnn(num_classes=num_classes, variant="large")
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     if "model_state_dict" in checkpoint:
@@ -180,7 +182,10 @@ def _load_torchsig_dataset() -> Optional[dict]:
         mapper = FamilyMapper(Path("configs/label_maps/torchsig_to_family.yaml"))
 
         # Map labels to family indices
-        family_indices = np.array([mapper.get_family_idx(str(lbl)) or -1 for lbl in labels])
+        family_indices = np.array([
+            idx if (idx := mapper.get_family_idx(str(lbl))) is not None else -1
+            for lbl in labels
+        ])
         valid_mask = family_indices >= 0
         data = data[valid_mask]
         labels = labels[valid_mask]
@@ -225,7 +230,10 @@ def _load_panoradio_dataset() -> Optional[dict]:
         mapper = FamilyMapper(Path("configs/label_maps/panoradio_to_family.yaml"))
 
         # Map labels to family indices
-        family_indices = np.array([mapper.get_family_idx(str(lbl)) or -1 for lbl in labels])
+        family_indices = np.array([
+            idx if (idx := mapper.get_family_idx(str(lbl))) is not None else -1
+            for lbl in labels
+        ])
         valid_mask = family_indices >= 0
         data = data[valid_mask]
         labels = labels[valid_mask]
@@ -406,7 +414,7 @@ def predict_family(
     signal: np.ndarray,
     family_names: list[str],
     normalize: bool = True,
-    crop_length: int = 128,
+    crop_length: int = 1024,
 ) -> tuple[Optional[str], Optional[np.ndarray]]:
     """Run inference on a signal and return family prediction.
 

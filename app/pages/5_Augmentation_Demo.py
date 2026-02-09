@@ -74,6 +74,9 @@ family = st.sidebar.selectbox("Modulation Family", family_names)
 family_idx = family_names.index(family)
 
 snr_list = sorted(set(int(s) for s in test_snrs))
+if not snr_list:
+    st.error("No SNR values found in the dataset.")
+    st.stop()
 snr = st.sidebar.select_slider(
     "SNR (dB)",
     options=snr_list,
