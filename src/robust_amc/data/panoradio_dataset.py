@@ -23,7 +23,6 @@ from torch.utils.data import DataLoader, Dataset
 
 from .label_mapping import FamilyMapper, get_default_panoradio_mapper
 
-
 # Panoradio dataset constants
 PANORADIO_SAMPLE_RATE = 6000  # 6 kHz
 PANORADIO_SIGNAL_LENGTH = 2048
@@ -314,7 +313,7 @@ def get_panoradio_loaders(
 
     # Get family indices for stratification
     family_indices = np.array(
-        [family_mapper.get_family_idx(str(lbl)) or -1 for lbl in labels]
+        [family_mapper.get_family_idx(str(lbl)) is not None or -1 for lbl in labels]
     )
 
     # Stratify by (family, snr)
