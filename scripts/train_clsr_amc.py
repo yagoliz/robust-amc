@@ -140,6 +140,19 @@ def parse_args():
         help="W&B run name (auto-generated if not set)",
     )
 
+    # Fine-tuning from pretrained checkpoint
+    parser.add_argument(
+        "--pretrained",
+        type=str,
+        default=None,
+        help="Path to pretrained checkpoint (loads encoder weights, re-initializes classifier)",
+    )
+    parser.add_argument(
+        "--freeze-encoder",
+        action="store_true",
+        help="Freeze encoder weights during fine-tuning (linear probe)",
+    )
+
     # Misc
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--num-workers", type=int, default=4, help="DataLoader workers")
@@ -151,7 +164,11 @@ def parse_args():
 def build_run_name(args) -> str:
     """Build a descriptive run name from training arguments."""
     parts = [f"clsr_amc-{args.variant}"]
-    if args.classification_weight == 0:
+    if args.pretrained:
+        parts.append("finetune")
+        if args.freeze_encoder:
+            parts.append("frozen")
+    elif args.classification_weight == 0:
         parts.append("pretrain")
     if args.lr != 1e-3:
         parts.append(f"lr{args.lr}")
@@ -224,8 +241,29 @@ def main():
     print(f"\nCreating CLSR-AMC ({args.variant}) with {num_families} output classes, seq_len={seq_len}")
     model = create_clsr_amc(num_classes=num_families, variant=args.variant, seq_len=seq_len)
 
+    # Load pretrained weights if specified
+    if args.pretrained:
+        print(f"\nLoading pretrained checkpoint from {args.pretrained}")
+        checkpoint = torch.load(args.pretrained, map_location=device, weights_only=False)
+        state_dict = checkpoint["model_state_dict"]
+
+        # Load encoder and projection head weights, skip classifier
+        encoder_keys = {k: v for k, v in state_dict.items() if k.startswith("encoder.")}
+        proj_keys = {k: v for k, v in state_dict.items() if k.startswith("projection_head.")}
+        pretrained_keys = {**encoder_keys, **proj_keys}
+
+        model.load_state_dict(pretrained_keys, strict=False)
+        print(f"  Loaded {len(pretrained_keys)} parameter tensors (encoder + projection head)")
+        print("  Classifier re-initialized from scratch")
+
+        if args.freeze_encoder:
+            for param in model.encoder.parameters():
+                param.requires_grad = False
+            print("  Encoder frozen (linear probe mode)")
+
     num_params = sum(p.numel() for p in model.parameters())
-    print(f"Model parameters: {num_params:,}")
+    num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model parameters: {num_params:,} ({num_trainable:,} trainable)")
 
     # Create loss
     criterion = CLSRAMCLoss(
