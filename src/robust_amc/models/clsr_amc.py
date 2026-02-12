@@ -272,11 +272,17 @@ class CLSRAMCLoss(nn.Module):
     2. Reconstruction loss (MSE) on decoded signal
     3. Classification loss (CrossEntropy)
 
+    When balance_losses=True, each loss component is normalized by its
+    exponential moving average before weighting. This ensures all three
+    objectives contribute equal gradient magnitude regardless of their
+    raw scale (contrastive ~4.5 vs reconstruction ~0.5 vs classification ~1.2).
+
     Args:
         contrastive_weight: Weight for contrastive loss.
         reconstruction_weight: Weight for reconstruction loss.
         classification_weight: Weight for classification loss.
         temperature: Temperature for NT-Xent loss.
+        balance_losses: Auto-balance loss magnitudes via EMA normalization.
     """
 
     def __init__(
@@ -285,12 +291,14 @@ class CLSRAMCLoss(nn.Module):
         reconstruction_weight: float = 1.0,
         classification_weight: float = 1.0,
         temperature: float = 0.5,
+        balance_losses: bool = True,
     ):
         super().__init__()
 
         self.contrastive_weight = contrastive_weight
         self.reconstruction_weight = reconstruction_weight
         self.classification_weight = classification_weight
+        self.balance_losses = balance_losses
 
         from ..losses.contrastive import NTXentLoss
         from ..losses.reconstruction import ReconstructionLoss
@@ -298,6 +306,14 @@ class CLSRAMCLoss(nn.Module):
         self.contrastive_loss = NTXentLoss(temperature=temperature)
         self.reconstruction_loss = ReconstructionLoss(mse_weight=1.0)
         self.classification_loss = nn.CrossEntropyLoss()
+
+        # EMA trackers for loss balancing
+        if balance_losses:
+            self.register_buffer("_ema_con", torch.tensor(1.0))
+            self.register_buffer("_ema_rec", torch.tensor(1.0))
+            self.register_buffer("_ema_cls", torch.tensor(1.0))
+            self.register_buffer("_ema_initialized", torch.tensor(False))
+            self._ema_decay = 0.99
 
     def forward(
         self,
@@ -347,12 +363,43 @@ class CLSRAMCLoss(nn.Module):
             l_cls = torch.tensor(0.0, device=logits.device)
             losses["classification"] = l_cls
 
-        # Combined loss
-        total = (
-            self.contrastive_weight * l_con +
-            self.reconstruction_weight * l_rec +
-            self.classification_weight * l_cls
+        # Combined loss with optional auto-balancing
+        # Only balance when training and all three components are active
+        _do_balance = (
+            self.balance_losses
+            and self.training
+            and self.contrastive_weight > 0
+            and self.reconstruction_weight > 0
+            and self.classification_weight > 0
         )
+
+        if _do_balance:
+            with torch.no_grad():
+                if not self._ema_initialized:
+                    # Initialize EMAs to current loss values
+                    self._ema_con = l_con.detach().clamp(min=1e-6)
+                    self._ema_rec = l_rec.detach().clamp(min=1e-6)
+                    self._ema_cls = l_cls.detach().clamp(min=1e-6)
+                    self._ema_initialized = torch.tensor(True)
+                else:
+                    d = self._ema_decay
+                    self._ema_con = d * self._ema_con + (1 - d) * l_con.detach()
+                    self._ema_rec = d * self._ema_rec + (1 - d) * l_rec.detach()
+                    self._ema_cls = d * self._ema_cls + (1 - d) * l_cls.detach()
+
+            # Normalize each loss by its EMA so all contribute ~1.0 before weighting
+            total = (
+                self.contrastive_weight * l_con / self._ema_con.detach().clamp(min=1e-6) +
+                self.reconstruction_weight * l_rec / self._ema_rec.detach().clamp(min=1e-6) +
+                self.classification_weight * l_cls / self._ema_cls.detach().clamp(min=1e-6)
+            )
+        else:
+            total = (
+                self.contrastive_weight * l_con +
+                self.reconstruction_weight * l_rec +
+                self.classification_weight * l_cls
+            )
+
         losses["total"] = total
 
         return losses

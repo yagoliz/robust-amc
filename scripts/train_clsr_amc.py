@@ -90,6 +90,10 @@ def parse_args():
         "--temperature", type=float, default=0.5,
         help="Temperature for NT-Xent contrastive loss",
     )
+    parser.add_argument(
+        "--no-balance-losses", action="store_true",
+        help="Disable automatic loss magnitude balancing (not recommended)",
+    )
 
     # Augmentation
     parser.add_argument(
@@ -229,6 +233,7 @@ def main():
         reconstruction_weight=args.reconstruction_weight,
         classification_weight=args.classification_weight,
         temperature=args.temperature,
+        balance_losses=not args.no_balance_losses,
     )
     print(f"Loss weights: contrastive={args.contrastive_weight}, "
           f"reconstruction={args.reconstruction_weight}, "
