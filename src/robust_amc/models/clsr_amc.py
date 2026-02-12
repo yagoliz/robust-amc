@@ -13,7 +13,6 @@ The model can be trained in multiple modes:
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .pf_cnn import FeatureBranch
 from ..losses.contrastive import ProjectionHead
@@ -30,6 +29,8 @@ class CLSRAMCEncoder(nn.Module):
         n_filters: Base number of filters per branch.
         n_stages: Number of convolutional stages per branch.
         seq_len: Input sequence length.
+        pool_output_size: Output size of adaptive average pooling per branch.
+            >1 preserves coarse temporal structure for reconstruction.
     """
 
     def __init__(
@@ -37,6 +38,7 @@ class CLSRAMCEncoder(nn.Module):
         n_filters: int = 4,
         n_stages: int = 5,
         seq_len: int = 128,
+        pool_output_size: int = 1,
     ):
         super().__init__()
 
@@ -46,6 +48,7 @@ class CLSRAMCEncoder(nn.Module):
             n_filters=n_filters,
             n_stages=n_stages,
             seq_len=seq_len,
+            pool_output_size=pool_output_size,
         )
 
         # Phase branch
@@ -54,6 +57,7 @@ class CLSRAMCEncoder(nn.Module):
             n_filters=n_filters,
             n_stages=n_stages,
             seq_len=seq_len,
+            pool_output_size=pool_output_size,
         )
 
         # Output dimension is sum of both branches
@@ -104,6 +108,8 @@ class CLSRAMC(nn.Module):
         hidden_dim: Hidden dimension in classifier.
         dropout: Dropout probability.
         decoder_type: Type of decoder ('conv' or 'linear').
+        pool_output_size: Encoder pooling output size. >1 preserves temporal
+            structure for reconstruction.
     """
 
     def __init__(
@@ -116,6 +122,7 @@ class CLSRAMC(nn.Module):
         hidden_dim: int = 128,
         dropout: float = 0.2,
         decoder_type: str = "linear",
+        pool_output_size: int = 1,
     ):
         super().__init__()
 
@@ -127,6 +134,7 @@ class CLSRAMC(nn.Module):
             n_filters=encoder_filters,
             n_stages=encoder_stages,
             seq_len=seq_len,
+            pool_output_size=pool_output_size,
         )
         self.embedding_dim = self.encoder.output_dim
 
@@ -428,6 +436,7 @@ def create_clsr_amc(
             "hidden_dim": 128,
             "dropout": 0.2,
             "decoder_type": "linear",
+            "pool_output_size": 4,
         },
         "small": {
             "encoder_filters": 2,
@@ -436,6 +445,7 @@ def create_clsr_amc(
             "hidden_dim": 64,
             "dropout": 0.1,
             "decoder_type": "linear",
+            "pool_output_size": 4,
         },
         "large": {
             "encoder_filters": 8,
@@ -444,6 +454,7 @@ def create_clsr_amc(
             "hidden_dim": 256,
             "dropout": 0.3,
             "decoder_type": "conv",
+            "pool_output_size": 4,
         },
     }
 

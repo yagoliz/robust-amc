@@ -42,6 +42,10 @@ class FeatureBranch(nn.Module):
         n_filters: Base number of filters (np in thesis)
         n_stages: Number of convolutional stages (ns in thesis)
         seq_len: Input sequence length
+        pool_output_size: Output size of adaptive average pooling.
+            1 = full temporal collapse (default, used by PF-CNN).
+            >1 = preserves coarse temporal structure (used by CLSR-AMC
+            to enable signal reconstruction).
     """
 
     def __init__(
@@ -50,6 +54,7 @@ class FeatureBranch(nn.Module):
         n_filters: int = 4,
         n_stages: int = 5,
         seq_len: int = 128,
+        pool_output_size: int = 1,
     ):
         super().__init__()
 
@@ -62,14 +67,18 @@ class FeatureBranch(nn.Module):
             current_channels = out_channels
 
         self.conv_layers = nn.Sequential(*layers)
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.output_dim = current_channels
+        self.pool = nn.AdaptiveAvgPool1d(pool_output_size)
+        self.pool_output_size = pool_output_size
+        self.output_dim = current_channels * pool_output_size
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (batch, 1, seq_len)
         x = self.conv_layers(x)
         x = self.pool(x)
-        x = x.squeeze(-1)  # (batch, output_dim)
+        if self.pool_output_size == 1:
+            x = x.squeeze(-1)  # (batch, channels)
+        else:
+            x = x.flatten(1)  # (batch, channels * pool_output_size)
         return x
 
 
