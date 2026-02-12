@@ -87,13 +87,15 @@ class CLSRAMCTrainer:
             z_i, z_j, p_i, p_j = self.model.forward_contrastive(x_i, x_j)
 
             # Reconstruction from first view's embedding
+            # Target is x_i (augmented view), not x_orig, to avoid conflicting
+            # with contrastive objective (which wants augmentation invariance)
             x_recon = self.model.decode(z_i)
 
             # Classification from first view
             logits = self.model.classify(z_i)
 
             # Compute losses
-            losses = self.criterion(p_i, p_j, x_recon, x_orig, logits, y)
+            losses = self.criterion(p_i, p_j, x_recon, x_i, logits, y)
 
             # Backward pass
             losses["total"].backward()
@@ -160,7 +162,7 @@ class CLSRAMCTrainer:
             x_recon = self.model.decode(z_i)
             logits = self.model.classify(z_i)
 
-            losses = self.criterion(p_i, p_j, x_recon, x_orig, logits, y)
+            losses = self.criterion(p_i, p_j, x_recon, x_i, logits, y)
 
             batch_size = x_i.size(0)
             total_loss += losses["total"].item() * batch_size
