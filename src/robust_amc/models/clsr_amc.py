@@ -156,7 +156,7 @@ class CLSRAMC(nn.Module):
         else:
             self.decoder = LightweightDecoder(
                 embedding_dim=self.embedding_dim,
-                hidden_dim=512,
+                hidden_dim=128,
                 output_len=seq_len,
             )
 
@@ -432,8 +432,8 @@ def create_clsr_amc(
         "default": {
             "encoder_filters": 4,
             "encoder_stages": 5,
-            "projection_dim": 128,
-            "hidden_dim": 128,
+            "projection_dim": 64,
+            "hidden_dim": 64,
             "dropout": 0.2,
             "decoder_type": "linear",
             "pool_output_size": 4,
@@ -441,8 +441,8 @@ def create_clsr_amc(
         "small": {
             "encoder_filters": 2,
             "encoder_stages": 4,
-            "projection_dim": 64,
-            "hidden_dim": 64,
+            "projection_dim": 32,
+            "hidden_dim": 32,
             "dropout": 0.1,
             "decoder_type": "linear",
             "pool_output_size": 4,
@@ -450,11 +450,11 @@ def create_clsr_amc(
         "large": {
             "encoder_filters": 8,
             "encoder_stages": 6,
-            "projection_dim": 256,
-            "hidden_dim": 256,
+            "projection_dim": 128,
+            "hidden_dim": 128,
             "dropout": 0.3,
             "decoder_type": "conv",
-            "pool_output_size": 4,
+            "pool_output_size": 1,
         },
     }
 

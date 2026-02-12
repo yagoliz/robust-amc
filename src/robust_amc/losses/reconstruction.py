@@ -187,8 +187,8 @@ class LightweightDecoder(nn.Module):
     def __init__(
         self,
         embedding_dim: int,
-        hidden_dim: int = 512,
-        output_len: int = 128,
+        hidden_dim: int = 128,
+        output_len: int = 1024,
     ):
         super().__init__()
         self.output_len = output_len
